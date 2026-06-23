@@ -190,6 +190,14 @@ class GitHubClient:
             payload={"labels": list(labels)},
         )
 
+    def list_issue_labels(self, repo: RepoRef, number: int) -> List[Dict[str, Any]]:
+        return list(
+            self.paginate(
+                f"/repos/{repo.owner}/{repo.name}/issues/{number}/labels",
+                {"per_page": 100},
+            )
+        )
+
     def remove_issue_label(self, repo: RepoRef, number: int, label: str) -> None:
         encoded_label = urllib.parse.quote(label, safe="")
         try:

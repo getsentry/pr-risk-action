@@ -188,6 +188,9 @@ class CliTests(unittest.TestCase):
             def remove_issue_label(self, repo, number, label):
                 self.removed.append((repo.slug, number, label))
 
+            def list_issue_labels(self, repo, number):
+                return [{"name": "risk: low"}, {"name": "unrelated"}]
+
             def add_issue_labels(self, repo, number, labels):
                 self.added.append((repo.slug, number, labels))
 
@@ -201,10 +204,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(label, "risk: medium")
         self.assertEqual(client.upserts[0][1], "risk: medium")
-        self.assertEqual(
-            [item[2] for item in client.removed],
-            ["risk: low", "risk: medium", "risk: high"],
-        )
+        self.assertEqual([item[2] for item in client.removed], ["risk: low"])
         self.assertEqual(client.added, [("getsentry/cli", 123, ["risk: medium"])])
 
     def test_resume_reuses_existing_rows_and_fetches_missing_prs(self):

@@ -613,6 +613,7 @@ def cmd_score_pr(args: argparse.Namespace) -> None:
         git_repo=args.git_repo,
         git_ref=args.git_ref,
     )
+    label_error: Optional[GitHubError] = None
     if args.label_pr:
         try:
             result["github_label"] = apply_pr_risk_label(
@@ -624,6 +625,7 @@ def cmd_score_pr(args: argparse.Namespace) -> None:
         except GitHubError as exc:
             result["github_label_error"] = str(exc)
             print(f"warning: failed to apply PR risk label: {exc}", file=sys.stderr)
+            label_error = exc
     if args.out:
         write_json(Path(args.out), result)
     if args.summary_file:
@@ -632,6 +634,8 @@ def cmd_score_pr(args: argparse.Namespace) -> None:
         Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(result["markdown_summary"], encoding="utf-8")
     write_github_outputs(result)
     print(result["markdown_summary"])
+    if label_error:
+        raise label_error
 
 
 def combine_feature_files(
@@ -917,8 +921,14 @@ def apply_pr_risk_label(
         selected["color"],
         selected["description"],
     )
-    for spec in label_specs.values():
-        client.remove_issue_label(repo, pr_number, spec["name"])
+    risk_label_names = {spec["name"] for spec in label_specs.values()}
+    current_label_names = {
+        str(label.get("name") or "")
+        for label in client.list_issue_labels(repo, pr_number)
+    }
+    for existing_label in sorted(risk_label_names & current_label_names):
+        if existing_label != selected["name"]:
+            client.remove_issue_label(repo, pr_number, existing_label)
     client.add_issue_labels(repo, pr_number, [selected["name"]])
     return selected["name"]
 
