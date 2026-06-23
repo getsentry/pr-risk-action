@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -12,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .features import build_feature_rows, load_raw_dataset, write_feature_csv
 from .git_history import build_git_pr_rows, collect_git_reverts_by_pr, survey_git_history
 from .github import (
+    GitHubError,
     GitHubClient,
     RepoRef,
     normalize_file,
@@ -31,6 +33,23 @@ from .modeling import (
 from .scoring import evaluate_predictions, markdown_report, score_feature_rows, write_json
 
 DEFAULT_OUTCOMES = ["strong_outcome", "medium_outcome"]
+RISK_LABELS = {
+    "low": {
+        "name": "risk: low",
+        "color": "0E8A16",
+        "description": "PR risk score: low",
+    },
+    "medium": {
+        "name": "risk: medium",
+        "color": "FBCA04",
+        "description": "PR risk score: medium",
+    },
+    "high": {
+        "name": "risk: high",
+        "color": "D93F0B",
+        "description": "PR risk score: high",
+    },
+}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -227,6 +246,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     score_pr.add_argument("--out", help="Optional JSON output path")
     score_pr.add_argument("--summary-file", help="Optional markdown summary path, e.g. GITHUB_STEP_SUMMARY")
     score_pr.add_argument("--skip-reviews", action="store_true", help="Skip fetching current PR reviews")
+    score_pr.add_argument("--label-pr", action="store_true", help="Apply a risk label to the pull request")
+    score_pr.add_argument(
+        "--label-prefix",
+        default="risk: ",
+        help="Prefix for risk labels. Defaults to 'risk: '.",
+    )
     score_pr.add_argument(
         "--git-repo",
         help="Optional local git checkout for supplemental historical revert labels",
@@ -588,6 +613,17 @@ def cmd_score_pr(args: argparse.Namespace) -> None:
         git_repo=args.git_repo,
         git_ref=args.git_ref,
     )
+    if args.label_pr:
+        try:
+            result["github_label"] = apply_pr_risk_label(
+                repo,
+                args.pr,
+                result,
+                label_prefix=args.label_prefix,
+            )
+        except GitHubError as exc:
+            result["github_label_error"] = str(exc)
+            print(f"warning: failed to apply PR risk label: {exc}", file=sys.stderr)
     if args.out:
         write_json(Path(args.out), result)
     if args.summary_file:
@@ -845,6 +881,46 @@ def write_github_outputs(result: Dict[str, Any]) -> None:
         handle.write(f"logistic_probability={prediction.get('logistic_probability', '')}\n")
         handle.write(f"logistic_percentile_repo={prediction.get('logistic_percentile_repo', '')}\n")
         handle.write(f"rule_percentile_repo={prediction.get('risk_percentile_repo', '')}\n")
+        handle.write(f"github_label={result.get('github_label', '')}\n")
+
+
+def apply_pr_risk_label(
+    repo: RepoRef,
+    pr_number: int,
+    result: Dict[str, Any],
+    label_prefix: str = "risk: ",
+    client: Optional[GitHubClient] = None,
+) -> str:
+    prediction = result.get("prediction") or {}
+    label = str(
+        prediction.get("final_risk_label")
+        or prediction.get("logistic_risk_label")
+        or prediction.get("risk_label")
+        or ""
+    ).lower()
+    if label not in RISK_LABELS:
+        raise ValueError(f"cannot apply unknown risk label {label!r}")
+
+    client = client or GitHubClient()
+    label_specs = {
+        key: {
+            **spec,
+            "name": f"{label_prefix}{key}",
+            "description": f"PR risk score: {key}",
+        }
+        for key, spec in RISK_LABELS.items()
+    }
+    selected = label_specs[label]
+    client.upsert_label(
+        repo,
+        selected["name"],
+        selected["color"],
+        selected["description"],
+    )
+    for spec in label_specs.values():
+        client.remove_issue_label(repo, pr_number, spec["name"])
+    client.add_issue_labels(repo, pr_number, [selected["name"]])
+    return selected["name"]
 
 
 def pr_risk_markdown_summary(result: Dict[str, Any]) -> str:

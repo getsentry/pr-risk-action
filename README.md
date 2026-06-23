@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: write
 
 jobs:
   risk:
@@ -32,6 +33,14 @@ jobs:
 ```
 
 The Action writes a Markdown summary to `GITHUB_STEP_SUMMARY`, writes `risk-pr-result.json` by default, and exposes outputs such as `risk-label`, `logistic-risk-label`, and `rule-risk-label`.
+
+By default it also keeps exactly one PR label in sync:
+
+- `risk: low`
+- `risk: medium`
+- `risk: high`
+
+The labels are created on demand. This requires `issues: write` in the caller workflow because pull request labels use GitHub's Issues API.
 
 ## Profiles
 

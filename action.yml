@@ -28,6 +28,14 @@ inputs:
     description: Skip fetching current PR reviews.
     required: false
     default: "true"
+  apply-label:
+    description: Apply risk labels to the pull request. Requires issues: write in the caller workflow.
+    required: false
+    default: "true"
+  label-prefix:
+    description: Prefix for risk labels.
+    required: false
+    default: "risk: "
   python-version:
     description: Python version used to run the scorer.
     required: false
@@ -58,6 +66,9 @@ outputs:
   rule-percentile-repo:
     description: Deterministic rule repo-relative percentile.
     value: ${{ steps.score.outputs.rule_percentile_repo }}
+  github-label:
+    description: Label applied to the pull request.
+    value: ${{ steps.score.outputs.github_label }}
 
 runs:
   using: composite
@@ -83,6 +94,8 @@ runs:
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_RESULT_PATH: ${{ inputs.result-path }}
         INPUT_SKIP_REVIEWS: ${{ inputs.skip-reviews }}
+        INPUT_APPLY_LABEL: ${{ inputs.apply-label }}
+        INPUT_LABEL_PREFIX: ${{ inputs.label-prefix }}
       run: |
         set -euo pipefail
 
@@ -110,16 +123,22 @@ runs:
           exit 1
         fi
 
-        skip_reviews=""
+        args=(
+          risk-pr score-pr
+          --repo "$INPUT_REPO"
+          --pr "$INPUT_PR_NUMBER"
+          --history "$history"
+          --model "$model"
+          --out "$INPUT_RESULT_PATH"
+          --summary-file "$GITHUB_STEP_SUMMARY"
+        )
+
         if [ "$INPUT_SKIP_REVIEWS" = "true" ]; then
-          skip_reviews="--skip-reviews"
+          args+=(--skip-reviews)
         fi
 
-        risk-pr score-pr \
-          --repo "$INPUT_REPO" \
-          --pr "$INPUT_PR_NUMBER" \
-          --history "$history" \
-          --model "$model" \
-          --out "$INPUT_RESULT_PATH" \
-          --summary-file "$GITHUB_STEP_SUMMARY" \
-          $skip_reviews
+        if [ "$INPUT_APPLY_LABEL" = "true" ]; then
+          args+=(--label-pr --label-prefix "$INPUT_LABEL_PREFIX")
+        fi
+
+        "${args[@]}"

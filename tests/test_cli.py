@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from risk_pr_agent.cli import (
+    apply_pr_risk_label,
     apply_model_file,
     backfill_repo,
     combine_feature_files,
@@ -174,6 +175,38 @@ class FailingGitHubClient(FakeGitHubClient):
 
 
 class CliTests(unittest.TestCase):
+    def test_apply_pr_risk_label_replaces_existing_labels(self):
+        class FakeLabelClient:
+            def __init__(self):
+                self.upserts = []
+                self.removed = []
+                self.added = []
+
+            def upsert_label(self, repo, name, color, description):
+                self.upserts.append((repo.slug, name, color, description))
+
+            def remove_issue_label(self, repo, number, label):
+                self.removed.append((repo.slug, number, label))
+
+            def add_issue_labels(self, repo, number, labels):
+                self.added.append((repo.slug, number, labels))
+
+        client = FakeLabelClient()
+        label = apply_pr_risk_label(
+            RepoRef.parse("getsentry/cli"),
+            123,
+            {"prediction": {"final_risk_label": "medium"}},
+            client=client,
+        )
+
+        self.assertEqual(label, "risk: medium")
+        self.assertEqual(client.upserts[0][1], "risk: medium")
+        self.assertEqual(
+            [item[2] for item in client.removed],
+            ["risk: low", "risk: medium", "risk: high"],
+        )
+        self.assertEqual(client.added, [("getsentry/cli", 123, ["risk: medium"])])
+
     def test_resume_reuses_existing_rows_and_fetches_missing_prs(self):
         with tempfile.TemporaryDirectory() as tmp:
             out_root = Path(tmp)
