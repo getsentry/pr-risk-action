@@ -1,0 +1,125 @@
+name: PR Risk Action
+description: Score a pull request as low, medium, or high risk.
+
+inputs:
+  repo:
+    description: GitHub repository as owner/name.
+    required: true
+  pr-number:
+    description: Pull request number.
+    required: true
+  profile:
+    description: Profile directory under profiles/. Defaults to owner__repo.
+    required: false
+    default: ""
+  history:
+    description: Optional raw historical PR JSONL or JSONL.GZ path. Defaults to the selected profile history.
+    required: false
+    default: ""
+  model:
+    description: Optional saved model JSON path. Defaults to the selected profile model.
+    required: false
+    default: ""
+  result-path:
+    description: JSON result output path.
+    required: false
+    default: risk-pr-result.json
+  skip-reviews:
+    description: Skip fetching current PR reviews.
+    required: false
+    default: "true"
+  python-version:
+    description: Python version used to run the scorer.
+    required: false
+    default: "3.11"
+
+outputs:
+  risk-label:
+    description: Final deployable low/medium/high label.
+    value: ${{ steps.score.outputs.risk_label }}
+  final-risk-label:
+    description: Final deployable low/medium/high label.
+    value: ${{ steps.score.outputs.final_risk_label }}
+  final-risk-policy:
+    description: Final label policy name.
+    value: ${{ steps.score.outputs.final_risk_policy }}
+  logistic-risk-label:
+    description: Logistic model label before guardrails.
+    value: ${{ steps.score.outputs.logistic_risk_label }}
+  rule-risk-label:
+    description: Deterministic rule label before guardrails.
+    value: ${{ steps.score.outputs.rule_risk_label }}
+  logistic-probability:
+    description: Logistic model probability for the trained outcome.
+    value: ${{ steps.score.outputs.logistic_probability }}
+  logistic-percentile-repo:
+    description: Logistic repo-relative percentile.
+    value: ${{ steps.score.outputs.logistic_percentile_repo }}
+  rule-percentile-repo:
+    description: Deterministic rule repo-relative percentile.
+    value: ${{ steps.score.outputs.rule_percentile_repo }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install PR risk scorer
+      shell: bash
+      run: python -m pip install "$GITHUB_ACTION_PATH"
+
+    - name: Score PR risk
+      id: score
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+        INPUT_PROFILE: ${{ inputs.profile }}
+        INPUT_HISTORY: ${{ inputs.history }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_RESULT_PATH: ${{ inputs.result-path }}
+        INPUT_SKIP_REVIEWS: ${{ inputs.skip-reviews }}
+      run: |
+        set -euo pipefail
+
+        profile="$INPUT_PROFILE"
+        if [ -z "$profile" ]; then
+          profile="${INPUT_REPO//\//__}"
+        fi
+
+        history="$INPUT_HISTORY"
+        if [ -z "$history" ]; then
+          history="$GITHUB_ACTION_PATH/profiles/$profile/pr-history.jsonl.gz"
+        fi
+
+        model="$INPUT_MODEL"
+        if [ -z "$model" ]; then
+          model="$GITHUB_ACTION_PATH/profiles/$profile/model.json"
+        fi
+
+        if [ ! -f "$history" ]; then
+          echo "PR risk history file not found: $history" >&2
+          exit 1
+        fi
+        if [ ! -f "$model" ]; then
+          echo "PR risk model file not found: $model" >&2
+          exit 1
+        fi
+
+        skip_reviews=""
+        if [ "$INPUT_SKIP_REVIEWS" = "true" ]; then
+          skip_reviews="--skip-reviews"
+        fi
+
+        risk-pr score-pr \
+          --repo "$INPUT_REPO" \
+          --pr "$INPUT_PR_NUMBER" \
+          --history "$history" \
+          --model "$model" \
+          --out "$INPUT_RESULT_PATH" \
+          --summary-file "$GITHUB_STEP_SUMMARY" \
+          $skip_reviews
