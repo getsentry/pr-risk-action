@@ -29,7 +29,7 @@ inputs:
     required: false
     default: "true"
   apply-label:
-    description: Apply risk labels to the pull request. Requires issues: write in the caller workflow.
+    description: "Apply risk labels to the pull request. Requires issues: write in the caller workflow."
     required: false
     default: "true"
   label-prefix:
