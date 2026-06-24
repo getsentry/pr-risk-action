@@ -2,7 +2,7 @@
 
 GitHub Action for scoring pull requests as `low`, `medium`, or `high` risk with the current deterministic/logistic PR risk MVP.
 
-This repository intentionally holds the Action runtime so consumer repositories do not need to vendor the scorer. The first bundled profile is for `getsentry/cli`.
+This repository intentionally holds the Action runtime so consumer repositories do not need to vendor the scorer. The first bundled profiles are for `getsentry/cli` and `getsentry/snuba`.
 
 ## Usage
 
@@ -10,12 +10,12 @@ This repository intentionally holds the Action runtime so consumer repositories 
 name: PR Risk Experiment
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: write
 
 jobs:
@@ -46,15 +46,20 @@ The labels are created on demand. This requires `issues: write` in the caller wo
 
 By default, the Action maps `owner/repo` to `profiles/owner__repo`.
 
-The bundled `getsentry__cli` profile contains:
+The bundled repo profiles contain:
 
 - `pr-history.jsonl.gz`: public historical PR rows used for repo-relative calibration.
 - `model.json`: selected logistic model weights.
+
+Available profiles:
+
+- `getsentry__cli`
+- `getsentry__snuba`
 
 Other repositories can either add a bundled profile here or pass explicit `history` and `model` paths.
 
 ## Safety
 
-The Action does not check out or execute pull request code. It reads PR metadata and diffs through the GitHub API, then runs the scorer code from this Action repository.
+The Action does not check out or execute pull request code. It reads PR metadata and diffs through the GitHub API, then runs the scorer code from this Action repository. Keep that property if using `pull_request_target`.
 
 This is an experimental advisory signal only. It should not block merges yet.
