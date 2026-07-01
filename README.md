@@ -2,7 +2,7 @@
 
 GitHub Action for scoring pull requests as `low`, `medium`, or `high` risk with the current deterministic/logistic PR risk MVP.
 
-This repository intentionally holds the Action runtime so consumer repositories do not need to vendor the scorer. The first bundled profiles are for `getsentry/cli`, `getsentry/sentry`, `getsentry/sentry-mcp`, `getsentry/snuba`, `getsentry/junior`, and `getsentry/dotagents`.
+This repository intentionally holds the Action runtime so consumer repositories do not need to vendor the scorer. The first bundled profiles are for `getsentry/cli`, `getsentry/sentry`, `getsentry/sentry-mcp`, `getsentry/snuba`, `getsentry/junior`, `getsentry/dotagents`, and `getsentry/sentry-dotnet`.
 
 ## Usage
 
@@ -59,6 +59,7 @@ Available profiles:
 - `getsentry__snuba`
 - `getsentry__junior`
 - `getsentry__dotagents`
+- `getsentry__sentry-dotnet`
 
 Other repositories can either add a bundled profile here or pass explicit `history` and `model` paths.
 
