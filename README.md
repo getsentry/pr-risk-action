@@ -1,6 +1,6 @@
 # PR Risk Action
 
-GitHub Action for scoring pull requests as `low`, `medium`, or `high` risk with the current deterministic/logistic PR risk MVP.
+GitHub Action for scoring pull requests as `low`, `medium`, or `high` risk with the current deterministic/logistic PR risk MVP. A high risk indicates that the PR will likely be reverted, or need some kind of follow-up fix, within 30 days of merging.
 
 This repository intentionally holds the Action runtime so consumer repositories do not need to vendor the scorer. The first bundled profiles are for `getsentry/cli`, `getsentry/sentry`, `getsentry/sentry-mcp`, `getsentry/snuba`, `getsentry/junior`, `getsentry/dotagents`, and `getsentry/sentry-dotnet`.
 
