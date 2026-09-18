@@ -16,7 +16,41 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
       - name: Install
         run: python -m pip install -e .
       - name: Unit tests
-        run: python -m unittest discover -s tests
+        run: |
+          python -m unittest discover -s tests
+          python -m unittest discover -s risk_tagger/tests
+      - name: Install Jev worker
+        run: npm ci --ignore-scripts --prefix worker
+      - name: Check Jev worker
+        run: npm run check --prefix worker && npm test --prefix worker
+      - name: Exercise Action entry point without credentials
+        id: action-smoke
+        uses: ./
+        continue-on-error: true
+        env:
+          AI_GATEWAY_API_KEY: ""
+        with:
+          repo: example/project
+          pr-number: "1"
+          result-path: .cache/action-smoke-result.json
+      - name: Verify explicit missing-credentials result
+        env:
+          ACTION_OUTCOME: ${{ steps.action-smoke.outcome }}
+          RISK_STATUS: ${{ steps.action-smoke.outputs.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(Path('.cache/action-smoke-result.json').read_text())
+          assert os.environ['ACTION_OUTCOME'] == 'failure'
+          assert os.environ['RISK_STATUS'] == result['status'] == 'missing_credentials'
+          assert result['risk_label'] is None
+          PY

@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 
 GITHUB_API = "https://api.github.com"
@@ -57,20 +57,9 @@ class GitHubClient:
         self.sleep_seconds = sleep_seconds
         self.max_retries = max_retries
 
-    def request_json(
-        self,
-        path: str,
-        params: Optional[Dict[str, Any]] = None,
-        method: str = "GET",
-        payload: Optional[Dict[str, Any]] = None,
-    ) -> Any:
+    def request_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = self._url(path, params)
-        body = None
-        headers = self._headers()
-        if payload is not None:
-            body = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        request = urllib.request.Request(url, headers=self._headers())
         waited_for_rate_limit = False
         for attempt in range(self.max_retries + 1):
             try:
@@ -162,53 +151,6 @@ class GitHubClient:
         data = self.request_json("/search/issues", {"q": query, "per_page": 1})
         return int((data or {}).get("total_count") or 0)
 
-    def upsert_label(
-        self,
-        repo: RepoRef,
-        name: str,
-        color: str,
-        description: str,
-    ) -> None:
-        encoded_name = urllib.parse.quote(name, safe="")
-        path = f"/repos/{repo.owner}/{repo.name}/labels/{encoded_name}"
-        payload = {"new_name": name, "color": color, "description": description}
-        try:
-            self.request_json(path, method="PATCH", payload=payload)
-        except GitHubError as exc:
-            if "GitHub API 404" not in str(exc):
-                raise
-            self.request_json(
-                f"/repos/{repo.owner}/{repo.name}/labels",
-                method="POST",
-                payload={"name": name, "color": color, "description": description},
-            )
-
-    def add_issue_labels(self, repo: RepoRef, number: int, labels: Sequence[str]) -> None:
-        self.request_json(
-            f"/repos/{repo.owner}/{repo.name}/issues/{number}/labels",
-            method="POST",
-            payload={"labels": list(labels)},
-        )
-
-    def list_issue_labels(self, repo: RepoRef, number: int) -> List[Dict[str, Any]]:
-        return list(
-            self.paginate(
-                f"/repos/{repo.owner}/{repo.name}/issues/{number}/labels",
-                {"per_page": 100},
-            )
-        )
-
-    def remove_issue_label(self, repo: RepoRef, number: int, label: str) -> None:
-        encoded_label = urllib.parse.quote(label, safe="")
-        try:
-            self.request_json(
-                f"/repos/{repo.owner}/{repo.name}/issues/{number}/labels/{encoded_label}",
-                method="DELETE",
-            )
-        except GitHubError as exc:
-            if "GitHub API 404" not in str(exc):
-                raise
-
     def _headers(self) -> Dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
@@ -263,6 +205,25 @@ def normalize_label(label: Dict[str, Any]) -> Dict[str, Any]:
         "name": label.get("name"),
         "color": label.get("color"),
         "description": label.get("description"),
+    }
+
+
+def pr_metadata(raw):
+    """Distinguish an observed empty GitHub body from uncollected Git metadata."""
+    captured = (raw.get("data_source") == "github_api" or raw.get("id") is not None)
+    available = captured and "body" in raw and isinstance(raw.get("body"), (str, type(None)))
+    fetched, merged = raw.get("fetched_at"), raw.get("merged_at")
+    after_merge = False
+    if fetched and merged:
+        after_merge = datetime.fromisoformat(fetched.replace("Z", "+00:00")) >= datetime.fromisoformat(merged.replace("Z", "+00:00"))
+    return {
+        "title": raw.get("title") if captured and isinstance(raw.get("title"), str) else None,
+        "description": (raw.get("body") or "") if available else None,
+        "description_available": available,
+        "source": "github_api" if captured else "unavailable",
+        "captured_at": fetched if captured else None,
+        "capture_kind": ("historical_collection_after_merge" if after_merge else "historical_collection") if captured else "unavailable",
+        "source_updated_at": raw.get("updated_at") if captured else None,
     }
 
 
