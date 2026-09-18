@@ -1,0 +1,11 @@
+{
+  "name": "risk-pr-jev-worker",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check jev-worker.mjs"
+  },
+  "dependencies": { "ai": "7.0.106" }
+}

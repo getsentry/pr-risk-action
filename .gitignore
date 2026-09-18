@@ -5,3 +5,10 @@ __pycache__/
 .mypy_cache/
 .DS_Store
 risk-pr-result.json
+.env
+.cache/
+node_modules/
+*.egg-info/
+build/
+dist/
+data/

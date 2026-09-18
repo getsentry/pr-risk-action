@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -13,7 +12,6 @@ from typing import Any, Dict, List, Optional, Sequence
 from .features import build_feature_rows, load_raw_dataset, write_feature_csv
 from .git_history import build_git_pr_rows, collect_git_reverts_by_pr, survey_git_history
 from .github import (
-    GitHubError,
     GitHubClient,
     RepoRef,
     normalize_file,
@@ -32,236 +30,12 @@ from .modeling import (
 )
 from .scoring import evaluate_predictions, markdown_report, score_feature_rows, write_json
 
-DEFAULT_OUTCOMES = ["strong_outcome", "medium_outcome"]
-RISK_LABELS = {
-    "low": {
-        "name": "risk: low",
-        "color": "0E8A16",
-        "description": "PR risk score: low",
-    },
-    "medium": {
-        "name": "risk: medium",
-        "color": "FBCA04",
-        "description": "PR risk score: medium",
-    },
-    "high": {
-        "name": "risk: high",
-        "color": "D93F0B",
-        "description": "PR risk score: high",
-    },
-}
-
-
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="risk-pr", description="Offline PR risk dataset tooling")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # Dataset collection helpers and legacy benchmark functions remain importable.
+    # All public inference commands use the Jev pipeline in commands.py.
+    from .commands import main as run
 
-    backfill = subparsers.add_parser("backfill", help="Fetch PR data from GitHub")
-    backfill.add_argument("--repo", action="append", required=True, help="GitHub repo as owner/name")
-    backfill.add_argument("--out", default="data/raw", help="Output root for raw datasets")
-    backfill.add_argument("--since", help="Only include PRs created on/after YYYY-MM-DD")
-    backfill.add_argument("--until", help="Only include PRs created on/before YYYY-MM-DD")
-    backfill.add_argument("--months", type=int, default=6, help="Months to backfill when --since is absent")
-    backfill.add_argument("--max-prs", type=int, help="Maximum PRs per repo")
-    backfill.add_argument("--skip-reviews", action="store_true", help="Skip PR review state backfill")
-    backfill.add_argument("--resume", action="store_true", help="Reuse existing PR rows and fetch missing PRs")
-    backfill.add_argument("--refresh", action="store_true", help="Refetch existing PR rows")
-    backfill.add_argument("--sleep", type=float, default=0.0, help="Sleep between GitHub API requests")
-    backfill.set_defaults(func=cmd_backfill)
-
-    git_backfill = subparsers.add_parser("git-backfill", help="Build raw merged PR rows from local git history")
-    git_backfill.add_argument("--repo", action="append", required=True, help="GitHub repo as owner/name")
-    git_backfill.add_argument(
-        "--git-repo",
-        action="append",
-        required=True,
-        help="Local git repo path or owner/name=/path mapping",
-    )
-    git_backfill.add_argument("--git-ref", default="origin/master", help="Git ref to scan")
-    git_backfill.add_argument("--out", default="data/raw-git", help="Output root for local-git raw datasets")
-    git_backfill.add_argument("--since", help="Only include commits on/after YYYY-MM-DD")
-    git_backfill.add_argument("--until", help="Only include commits on/before YYYY-MM-DD")
-    git_backfill.add_argument("--months", type=int, default=24, help="Months to scan when --since is absent")
-    git_backfill.add_argument("--max-prs", type=int, help="Maximum PR rows per repo")
-    git_backfill.set_defaults(func=cmd_git_backfill)
-
-    features = subparsers.add_parser("features", help="Build feature rows from a raw PR dataset")
-    features.add_argument("--input", required=True, help="Raw prs.jsonl path")
-    features.add_argument("--out", default="data/processed", help="Output root for feature datasets")
-    features.set_defaults(func=cmd_features)
-
-    score = subparsers.add_parser("score", help="Score feature rows and write an eval report")
-    score.add_argument("--input", required=True, help="Feature JSONL path")
-    score.add_argument("--out", default="data/processed", help="Output root for scored datasets")
-    score.add_argument(
-        "--outcome",
-        action="append",
-        help="Outcome field to evaluate. Repeatable. Defaults to strong_outcome and medium_outcome.",
-    )
-    score.add_argument(
-        "--include-unmerged",
-        action="store_true",
-        help="Include unmerged/open PRs in evaluation. Default evaluates merged PRs only.",
-    )
-    score.set_defaults(func=cmd_score)
-
-    build = subparsers.add_parser("build", help="Backfill, extract features, score, and evaluate")
-    build.add_argument("--repo", action="append", required=True, help="GitHub repo as owner/name")
-    build.add_argument("--out", default="data", help="Output root containing raw/ and processed/")
-    build.add_argument("--since", help="Only include PRs created on/after YYYY-MM-DD")
-    build.add_argument("--until", help="Only include PRs created on/before YYYY-MM-DD")
-    build.add_argument("--months", type=int, default=12, help="Months to backfill when --since is absent")
-    build.add_argument("--max-prs", type=int, help="Maximum PRs per repo")
-    build.add_argument("--skip-reviews", action="store_true", help="Skip PR review state backfill")
-    build.add_argument("--resume", action="store_true", help="Reuse existing PR rows and fetch missing PRs")
-    build.add_argument("--refresh", action="store_true", help="Refetch existing PR rows")
-    build.add_argument("--sleep", type=float, default=0.0, help="Sleep between GitHub API requests")
-    build.add_argument(
-        "--git-repo",
-        action="append",
-        help="Optional local git repo mapping as owner/name=/path for revert outcome enrichment",
-    )
-    build.add_argument("--git-ref", default="origin/master", help="Git ref for local git outcome enrichment")
-    build.add_argument(
-        "--outcome",
-        action="append",
-        help="Outcome field to evaluate. Repeatable. Defaults to strong_outcome and medium_outcome.",
-    )
-    build.add_argument(
-        "--include-unmerged",
-        action="store_true",
-        help="Include unmerged/open PRs in evaluation. Default evaluates merged PRs only.",
-    )
-    build.set_defaults(func=cmd_build)
-
-    survey = subparsers.add_parser("survey", help="Estimate repo slice size before a large backfill")
-    survey.add_argument("--repo", required=True, help="GitHub repo as owner/name")
-    survey.add_argument("--since", help="Only include PRs created on/after YYYY-MM-DD")
-    survey.add_argument("--until", help="Only include PRs created on/before YYYY-MM-DD")
-    survey.add_argument("--months", type=int, default=12, help="Months to survey when --since is absent")
-    survey.add_argument("--git-repo", help="Optional local git checkout path for revert estimates")
-    survey.add_argument("--git-ref", default="origin/master", help="Git ref for local git estimates")
-    survey.set_defaults(func=cmd_survey)
-
-    combine = subparsers.add_parser("combine", help="Combine feature datasets and evaluate them together")
-    combine.add_argument("--input", action="append", required=True, help="Feature JSONL path")
-    combine.add_argument("--out", default="data/processed/combined", help="Combined processed output directory")
-    combine.add_argument(
-        "--dedupe",
-        action="store_true",
-        help="Deduplicate by repo and PR number. Later --input rows replace earlier rows.",
-    )
-    combine.add_argument(
-        "--outcome",
-        action="append",
-        help="Outcome field to evaluate. Repeatable. Defaults to strong_outcome and medium_outcome.",
-    )
-    combine.add_argument(
-        "--include-unmerged",
-        action="store_true",
-        help="Include unmerged/open PRs in evaluation. Default evaluates merged PRs only.",
-    )
-    combine.set_defaults(func=cmd_combine)
-
-    train = subparsers.add_parser("train", help="Train an interpretable logistic regression baseline")
-    train.add_argument("--input", required=True, help="Feature JSONL path")
-    train.add_argument("--out", default="data/processed", help="Output root for model artifacts")
-    train.add_argument(
-        "--outcome",
-        action="append",
-        help="Outcome field to train on. Repeatable. Defaults to medium_outcome.",
-    )
-    train.add_argument(
-        "--include-unmerged",
-        action="store_true",
-        help="Include unmerged/open PRs as negatives. Default trains on merged PRs only.",
-    )
-    train.add_argument("--train-fraction", type=float, default=0.8, help="Chronological train split fraction")
-    train.add_argument(
-        "--validation-fraction",
-        type=float,
-        default=0.1,
-        help="Chronological validation split fraction after train. Remaining rows are test.",
-    )
-    train.add_argument("--epochs", type=int, default=800, help="Gradient descent epochs")
-    train.add_argument("--learning-rate", type=float, default=0.05, help="Gradient descent learning rate")
-    train.add_argument("--l2", type=float, default=0.01, help="L2 regularization strength")
-    train.add_argument(
-        "--maturity-days",
-        type=int,
-        default=0,
-        help=(
-            "Exclude the newest N days from train/validation/test evaluation so recent PRs "
-            "are not treated as final negatives before they have time to be reverted or fixed."
-        ),
-    )
-    train.add_argument(
-        "--feature-set",
-        choices=[
-            "static_no_process",
-            "selected_static_v1",
-            "at_open",
-            "in_review_final",
-            "in_review",
-            "legacy",
-        ],
-        default=DEFAULT_FEATURE_SET,
-        help=(
-            "Feature set to train. static_no_process excludes comments/reviews/commit counts "
-            "but still uses the fetched PR diff snapshot; selected_static_v1 uses the deterministic "
-            "Meta-aligned MVP signal set; in_review_final includes final process signals; legacy "
-            "keeps the pre-history-expansion feature list. at_open and in_review are accepted as aliases."
-        ),
-    )
-    train.add_argument(
-        "--no-class-balance",
-        action="store_true",
-        help="Disable balanced class weights for rare positive outcomes",
-    )
-    train.set_defaults(func=cmd_train)
-
-    apply_model = subparsers.add_parser("apply-model", help="Apply a saved logistic model to feature rows")
-    apply_model.add_argument("--input", required=True, help="Feature JSONL path")
-    apply_model.add_argument("--model", required=True, help="Saved model_*.json path")
-    apply_model.add_argument("--out", default="data/processed", help="Output root for modeled rows")
-    apply_model.set_defaults(func=cmd_apply_model)
-
-    score_pr = subparsers.add_parser("score-pr", help="Fetch and score one pull request")
-    score_pr.add_argument(
-        "--repo",
-        default=os.environ.get("GITHUB_REPOSITORY"),
-        help="GitHub repo as owner/name. Defaults to GITHUB_REPOSITORY.",
-    )
-    score_pr.add_argument("--pr", type=int, required=True, help="Pull request number to score")
-    score_pr.add_argument(
-        "--history",
-        action="append",
-        required=True,
-        help=(
-            "Raw historical PR JSONL/JSONL.GZ for this repo. Repeatable. "
-            "Rows for the target PR are replaced with the freshly fetched PR."
-        ),
-    )
-    score_pr.add_argument("--model", required=True, help="Saved model_*.json path")
-    score_pr.add_argument("--out", help="Optional JSON output path")
-    score_pr.add_argument("--summary-file", help="Optional markdown summary path, e.g. GITHUB_STEP_SUMMARY")
-    score_pr.add_argument("--skip-reviews", action="store_true", help="Skip fetching current PR reviews")
-    score_pr.add_argument("--label-pr", action="store_true", help="Apply a risk label to the pull request")
-    score_pr.add_argument(
-        "--label-prefix",
-        default="risk: ",
-        help="Prefix for risk labels. Defaults to 'risk: '.",
-    )
-    score_pr.add_argument(
-        "--git-repo",
-        help="Optional local git checkout for supplemental historical revert labels",
-    )
-    score_pr.add_argument("--git-ref", default="origin/master", help="Git ref for local git revert labels")
-    score_pr.set_defaults(func=cmd_score_pr)
-
-    args = parser.parse_args(argv)
-    args.func(args)
-    return 0
+    return run(argv)
 
 
 def cmd_backfill(args: argparse.Namespace) -> None:
@@ -412,6 +186,7 @@ def fetch_pr_row(
 ) -> Dict[str, Any]:
     detail = client.get_pull_request(repo, number)
     row = normalize_pr(repo, detail, fetched_at)
+    row.update(data_source="github_api", metrics_authoritative=True, files_authoritative=True)
     row["files"] = [normalize_file(item) for item in client.list_pull_files(repo, number)]
     row["reviews"] = []
     if not skip_reviews:
@@ -465,15 +240,6 @@ def build_features_file(
     return jsonl_path
 
 
-def cmd_score(args: argparse.Namespace) -> None:
-    feature_path = Path(args.input)
-    out_dir = Path(args.out) / feature_path.parent.name
-    score_feature_file(
-        feature_path,
-        out_dir,
-        outcome_names=args.outcome or DEFAULT_OUTCOMES,
-        include_unmerged=args.include_unmerged,
-    )
 
 
 def score_feature_file(
@@ -502,40 +268,6 @@ def score_feature_file(
     return scored_path
 
 
-def cmd_build(args: argparse.Namespace) -> None:
-    since = parse_since(args.since, args.months)
-    until = parse_until(args.until)
-    client = GitHubClient(sleep_seconds=args.sleep)
-    out_root = Path(args.out)
-    raw_root = out_root / "raw"
-    processed_root = out_root / "processed"
-    git_repo_by_slug = parse_git_repo_specs(args.git_repo or [], args.repo)
-    for repo_value in args.repo:
-        repo = RepoRef.parse(repo_value)
-        raw_path = backfill_repo(client, repo, raw_root, since, until, args)
-        git_reverts = None
-        manifest_extra: Dict[str, Any] = {}
-        if repo.slug in git_repo_by_slug:
-            git_path = git_repo_by_slug[repo.slug]
-            git_reverts = collect_git_reverts_by_pr(git_path, args.git_ref, since=since, until=until)
-            manifest_extra = {
-                "git_repo": git_path,
-                "git_ref": args.git_ref,
-                "git_revert_target_prs": len(git_reverts),
-                "git_revert_commits": sum(len(commits) for commits in git_reverts.values()),
-            }
-        features_path = build_features_file(
-            raw_path,
-            processed_root / repo.path_slug,
-            git_reverts_by_pr=git_reverts,
-            extra_manifest=manifest_extra,
-        )
-        score_feature_file(
-            features_path,
-            processed_root / repo.path_slug,
-            outcome_names=args.outcome or DEFAULT_OUTCOMES,
-            include_unmerged=args.include_unmerged,
-        )
 
 
 def cmd_survey(args: argparse.Namespace) -> None:
@@ -564,78 +296,12 @@ def cmd_survey(args: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
-def cmd_combine(args: argparse.Namespace) -> None:
-    combine_feature_files(
-        [Path(value) for value in args.input],
-        Path(args.out),
-        outcome_names=args.outcome or DEFAULT_OUTCOMES,
-        include_unmerged=args.include_unmerged,
-        dedupe=args.dedupe,
-    )
 
 
-def cmd_train(args: argparse.Namespace) -> None:
-    feature_path = Path(args.input)
-    out_dir = Path(args.out) / feature_path.parent.name
-    train_feature_file(
-        feature_path,
-        out_dir,
-        outcome_names=args.outcome or ["medium_outcome"],
-        include_unmerged=args.include_unmerged,
-        train_fraction=args.train_fraction,
-        validation_fraction=args.validation_fraction,
-        epochs=args.epochs,
-        learning_rate=args.learning_rate,
-        l2=args.l2,
-        class_balance=not args.no_class_balance,
-        feature_set=args.feature_set,
-        maturity_days=args.maturity_days,
-    )
 
 
-def cmd_apply_model(args: argparse.Namespace) -> None:
-    feature_path = Path(args.input)
-    model_path = Path(args.model)
-    out_dir = Path(args.out) / feature_path.parent.name
-    apply_model_file(feature_path, model_path, out_dir)
 
 
-def cmd_score_pr(args: argparse.Namespace) -> None:
-    if not args.repo:
-        raise ValueError("--repo is required when GITHUB_REPOSITORY is not set")
-    repo = RepoRef.parse(args.repo)
-    result = score_pull_request(
-        repo=repo,
-        pr_number=args.pr,
-        history_paths=[Path(value) for value in args.history],
-        model_path=Path(args.model),
-        skip_reviews=args.skip_reviews,
-        git_repo=args.git_repo,
-        git_ref=args.git_ref,
-    )
-    label_error: Optional[GitHubError] = None
-    if args.label_pr:
-        try:
-            result["github_label"] = apply_pr_risk_label(
-                repo,
-                args.pr,
-                result,
-                label_prefix=args.label_prefix,
-            )
-        except GitHubError as exc:
-            result["github_label_error"] = str(exc)
-            print(f"warning: failed to apply PR risk label: {exc}", file=sys.stderr)
-            label_error = exc
-    if args.out:
-        write_json(Path(args.out), result)
-    if args.summary_file:
-        Path(args.summary_file).write_text(result["markdown_summary"], encoding="utf-8")
-    elif os.environ.get("GITHUB_STEP_SUMMARY"):
-        Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(result["markdown_summary"], encoding="utf-8")
-    write_github_outputs(result)
-    print(result["markdown_summary"])
-    if label_error:
-        raise label_error
 
 
 def combine_feature_files(
@@ -885,52 +551,6 @@ def write_github_outputs(result: Dict[str, Any]) -> None:
         handle.write(f"logistic_probability={prediction.get('logistic_probability', '')}\n")
         handle.write(f"logistic_percentile_repo={prediction.get('logistic_percentile_repo', '')}\n")
         handle.write(f"rule_percentile_repo={prediction.get('risk_percentile_repo', '')}\n")
-        handle.write(f"github_label={result.get('github_label', '')}\n")
-
-
-def apply_pr_risk_label(
-    repo: RepoRef,
-    pr_number: int,
-    result: Dict[str, Any],
-    label_prefix: str = "risk: ",
-    client: Optional[GitHubClient] = None,
-) -> str:
-    prediction = result.get("prediction") or {}
-    label = str(
-        prediction.get("final_risk_label")
-        or prediction.get("logistic_risk_label")
-        or prediction.get("risk_label")
-        or ""
-    ).lower()
-    if label not in RISK_LABELS:
-        raise ValueError(f"cannot apply unknown risk label {label!r}")
-
-    client = client or GitHubClient()
-    label_specs = {
-        key: {
-            **spec,
-            "name": f"{label_prefix}{key}",
-            "description": f"PR risk score: {key}",
-        }
-        for key, spec in RISK_LABELS.items()
-    }
-    selected = label_specs[label]
-    client.upsert_label(
-        repo,
-        selected["name"],
-        selected["color"],
-        selected["description"],
-    )
-    risk_label_names = {spec["name"] for spec in label_specs.values()}
-    current_label_names = {
-        str(label.get("name") or "")
-        for label in client.list_issue_labels(repo, pr_number)
-    }
-    for existing_label in sorted(risk_label_names & current_label_names):
-        if existing_label != selected["name"]:
-            client.remove_issue_label(repo, pr_number, existing_label)
-    client.add_issue_labels(repo, pr_number, [selected["name"]])
-    return selected["name"]
 
 
 def pr_risk_markdown_summary(result: Dict[str, Any]) -> str:
