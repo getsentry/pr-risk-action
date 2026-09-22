@@ -472,7 +472,7 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
             _append(journal, attempt)
             attempts.append(attempt)
             if attempt.get("retryable") and len(attempts) < max_attempts:
-                time.sleep(min(2 ** (index - 1), 4))
+                time.sleep(min(10 * 2 ** (index - 1), 20))
         if attempts and attempts[-1].get("status") == "ok":
             _write(cache, {"status": "ok", "request_hash": request_hash, "attempts": attempts})
         return attempts, False
