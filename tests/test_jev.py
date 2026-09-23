@@ -179,7 +179,7 @@ class BinaryRequestTests(unittest.TestCase):
                 if "previous_path" in file:
                     self.assertEqual(actual["previous_path"], "old.bin")
 
-    def test_readable_transition_sides_are_essential_across_content_profiles(self):
+    def test_readable_transition_sides_are_preserved_when_the_request_fits(self):
         for before, after in (("old_behavior()\n", b"\x00new"), (b"\x00old", "new_behavior()\n"), ("old\n", "new\n")):
             for options in ({}, {"input_profile": "files"}, {"input_profile": "metadata-files"},
                             {"input_profile": "metadata-files", "context_stage": "diff_only"}, {"variant": "B"}, {"variant": "C"}):
@@ -194,9 +194,10 @@ class BinaryRequestTests(unittest.TestCase):
                             self.assertEqual(actual[side], value)
                         else:
                             self.assertNotIn(side, actual)
-                    rejected = build_request(source, max_bytes=built["request_bytes"] - 1, **options)
-                    self.assertTrue(rejected["status"].endswith("exceeds_budget"))
-                    self.assertNotIn("request", rejected)
+                    if options:
+                        rejected = build_request(source, max_bytes=built["request_bytes"] - 1, **options)
+                        self.assertTrue(rejected["status"].endswith("exceeds_budget"))
+                        self.assertNotIn("request", rejected)
 
     def test_invalid_binary_metadata_never_calls_provider(self):
         cases = [None, {}, {"before": {"kind": "binary"}},
@@ -266,16 +267,20 @@ class InputProfileTests(unittest.TestCase):
         self.source["files"][0]["after"] = "optional source must not enter the standard request"
         self.assertEqual(build_request(self.source)["request_hash"], standard["request_hash"])
 
-    def test_default_never_silently_drops_missing_metadata_or_oversized_diff(self):
+    def test_default_preserves_metadata_and_explicitly_truncates_oversized_diff(self):
         self.source["pr_metadata"] = {}
         self.assertEqual(build_request(self.source)["status"], "description_unavailable")
         self.assertEqual(build_request(self.source, "A")["status"], "ready")
         self.source["pr_metadata"] = {"title": "Title", "description": "", "description_available": True}
+        self.source["files"][0]["patch"] += "+bounded change\n" * 500
         prepared = build_request(self.source)
         self.assertEqual(prepared["status"], "ready")
-        rejected = build_request(self.source, max_bytes=prepared["request_bytes"] - 1)
-        self.assertEqual(rejected["status"], "input_exceeds_budget")
-        self.assertNotIn("request", rejected)
+        bounded = build_request(self.source, max_bytes=prepared["request_bytes"] - 1)
+        self.assertEqual(bounded["status"], "ready")
+        self.assertTrue(bounded["diff_truncated"])
+        self.assertEqual(bounded["request"]["state"]["pr"], {"title": "Title", "description": ""})
+        self.assertLess(bounded["request_bytes"], prepared["request_bytes"])
+        self.assertIn("code_context", bounded["request"]["state"])
 
     def test_profiles_include_only_selected_fields(self):
         source = self.source
@@ -355,6 +360,7 @@ class InputProfileTests(unittest.TestCase):
     def test_every_profile_obeys_the_exact_serialized_utf8_budget(self):
         self.source["pr_metadata"]["description"] = "café ☕"
         self.source["files"][0]["path"] = "src/café.py"
+        self.source["files"][0]["patch"] += "+café ☕\n" * 500
         for profile in INPUT_PROFILES:
             with self.subTest(profile=profile):
                 stage = {"context_stage": "diff_only"} if profile == "metadata-files" else {}
@@ -363,8 +369,13 @@ class InputProfileTests(unittest.TestCase):
                 self.assertEqual(result["request_bytes"], size)
                 self.assertEqual(build_request(self.source, max_bytes=size, input_profile=profile, **stage)["status"], "ready")
                 oversized = build_request(self.source, max_bytes=size - 1, input_profile=profile, **stage)
-                self.assertTrue(oversized["status"].endswith("exceeds_budget"))
-                self.assertNotIn("request", oversized)
+                if profile == "metadata-diff":
+                    self.assertEqual(oversized["status"], "ready")
+                    self.assertTrue(oversized["diff_truncated"])
+                    self.assertLessEqual(oversized["request_bytes"], size - 1)
+                else:
+                    self.assertTrue(oversized["status"].endswith("exceeds_budget"))
+                    self.assertNotIn("request", oversized)
 
     def test_unavailable_description_never_calls_worker_but_captured_empty_body_is_valid(self):
         for metadata in ({}, {"title": "Title", "description": "", "description_available": False},
@@ -530,7 +541,7 @@ class InputProfileTests(unittest.TestCase):
 class InferenceTests(unittest.TestCase):
     def setUp(self):
         sleeper = patch("risk_pr_agent.jev.time.sleep")
-        sleeper.start()
+        self.sleep = sleeper.start()
         self.addCleanup(sleeper.stop)
 
     def test_accounting_includes_retries_and_cache_avoids_calls(self):
@@ -563,16 +574,84 @@ class InferenceTests(unittest.TestCase):
         self.assertIsNone(row["usage"]["input_tokens"])
         self.assertAlmostEqual(row["reported_cost_usd_known"], .0000042)
 
-    def test_three_attempts_maximum_and_resume_does_not_reset_budget(self):
+    def test_fourth_attempt_can_succeed_after_linear_backoff(self):
+        responses = iter([{"status": "provider_error", "retryable": True}] * 3 + [success()])
+        calls = []
+
+        def worker(request):
+            calls.append(request)
+            self.assertEqual(self.sleep.call_count, len(calls) - 1)
+            return next(responses)
+
+        with tempfile.TemporaryDirectory() as out:
+            row = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
+            self.assertEqual(row["status"], "ok")
+            self.assertEqual([attempt["attempt"] for attempt in row["attempts"]], [1, 2, 3, 4])
+            self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [10, 20, 30])
+            cached = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
+            self.assertTrue(cached["cache_hit"])
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(self.sleep.call_count, 3)
+            self.assertEqual(len(Path(out, "attempts.jsonl").read_text().splitlines()), 8)
+
+    def test_four_attempts_maximum_and_resume_does_not_reset_budget(self):
         calls = []
         def worker(request):
             calls.append(request)
             return {"status": "provider_error", "retryable": True}
         with tempfile.TemporaryDirectory() as out:
             row = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
-            self.assertEqual(len(row["attempts"]), 3)
-            score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)
-            self.assertEqual(len(calls), 3)
+            self.assertEqual(row["status"], "provider_error")
+            self.assertIsNone(row["risk_label"])
+            self.assertEqual(len(row["attempts"]), 4)
+            resumed = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
+            self.assertEqual(len(resumed["attempts"]), 4)
+            self.assertEqual(len(calls), 4)
+            self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [10, 20, 30])
+
+    def test_max_attempts_accepts_one_through_four(self):
+        for limit in range(1, 5):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as out:
+                self.sleep.reset_mock()
+                row = score_snapshots([snapshot()], out, max_attempts=limit,
+                                      worker=lambda _: {"status": "provider_error", "retryable": True},
+                                      price_snapshot=PRICE)[0]
+                self.assertEqual(len(row["attempts"]), limit)
+                self.assertEqual([call.args[0] for call in self.sleep.call_args_list], list(range(10, 10 * limit, 10)))
+
+    def test_max_attempts_rejects_out_of_range_limits(self):
+        for limit in (0, 5):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as out:
+                with self.assertRaisesRegex(ValueError, "between 1 and 4"):
+                    score_snapshots([snapshot()], out, max_attempts=limit, price_snapshot=PRICE)
+        self.sleep.assert_not_called()
+
+    def test_resuming_three_failures_uses_only_fourth_attempt(self):
+        with tempfile.TemporaryDirectory() as out:
+            score_snapshots([snapshot()], out, max_attempts=3,
+                            worker=lambda _: {"status": "provider_error", "retryable": True},
+                            price_snapshot=PRICE)
+            self.sleep.reset_mock()
+            calls = []
+
+            def worker(request):
+                calls.append(request)
+                return success()
+
+            row = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
+            self.assertEqual(row["status"], "ok")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual([attempt["attempt"] for attempt in row["attempts"]], [1, 2, 3, 4])
+            self.sleep.assert_called_once_with(30)
+
+    def test_nonretryable_error_does_not_wait_or_retry(self):
+        with tempfile.TemporaryDirectory() as out:
+            row = score_snapshots([snapshot()], out,
+                                  worker=lambda _: {"status": "provider_error", "retryable": False},
+                                  price_snapshot=PRICE)[0]
+        self.assertEqual(len(row["attempts"]), 1)
+        self.assertIsNone(row["risk_label"])
+        self.sleep.assert_not_called()
 
     def test_interrupted_attempt_is_preserved_as_unknown(self):
         with tempfile.TemporaryDirectory() as out:

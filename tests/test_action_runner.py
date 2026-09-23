@@ -168,6 +168,8 @@ class ActionRunnerTests(unittest.TestCase):
         def run(args, **kwargs):
             self.assertEqual(args[:4], [sys.executable, "-m", "risk_pr_agent.cli", "score-pr"])
             self.assertIn("--candidate", args)
+            self.assertGreater(kwargs["timeout"], 4 * 65 + 10 + 20 + 30)
+            self.assertLess(kwargs["timeout"], 600)
             self.assertEqual(kwargs["cwd"], child)
             self.assertEqual(kwargs["env"]["PYTHONPATH"], str(action_runner.SOURCE_ROOT / "src"))
             self.assertNotIn("GITHUB_OUTPUT", kwargs["env"])

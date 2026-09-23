@@ -1,5 +1,5 @@
 name: PR Risk Action
-description: Classify a public pull request with Jev from metadata and its complete diff.
+description: Classify a public pull request with Jev from metadata and a bounded diff.
 
 inputs:
   repo:
@@ -49,6 +49,16 @@ runs:
         AI_GATEWAY_API_KEY: ""
       run: npm ci --ignore-scripts --prefix "$GITHUB_ACTION_PATH/worker"
 
+    - name: Install trusted context estimator
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        AI_GATEWAY_API_KEY: ""
+        TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/pr-risk-action-tiktoken
+      run: |
+        python -I -m pip install "$GITHUB_ACTION_PATH"
+        python -I -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'
+
     - name: Score PR risk
       id: score
       shell: bash
@@ -59,4 +69,5 @@ runs:
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
         INPUT_EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
         INPUT_RESULT_PATH: ${{ inputs.result-path }}
+        TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/pr-risk-action-tiktoken
       run: PYTHONPATH="$GITHUB_ACTION_PATH/src" python -m risk_pr_agent.action_runner

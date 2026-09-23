@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from risk_pr_agent.commands import _load_env, main
+from risk_pr_agent.commands import _load_env, main, risk_summary
 from risk_pr_agent.dataset import prepare_snapshot
 from risk_pr_agent.github import RepoRef, normalize_pr, write_jsonl
 from risk_pr_agent.jev import MODEL, VERSIONS, build_request
@@ -83,12 +83,22 @@ class CommandIntegrationTests(unittest.TestCase):
         for result in results:
             self.assertEqual(result["input_profile"], "metadata-diff")
             self.assertEqual(result["configuration"]["max_bytes"], 1048576)
+            self.assertFalse(result["diff_truncated"])
+            self.assertGreater(result["estimated_input_tokens"], 0)
+            self.assertEqual(result["context_budget"]["model_limit"], 32000)
             state = result["request"]["state"]
             self.assertEqual(state["pr"], {"title": "Change behavior", "description": "PR_DESCRIPTION"})
             self.assertEqual(state["line_totals"], {"additions": 1, "deletions": 1})
             self.assertEqual(state["files"][0]["patch"], self.snapshot["files"][0]["patch"])
             self.assertNotIn("before", state["files"][0])
             self.assertNotIn("after", state["files"][0])
+
+    def test_summary_discloses_truncation_and_distinguishes_proxy_from_usage(self):
+        summary = risk_summary({"status": "ok", "risk_label": "medium",
+                                "diff_truncated": True, "estimated_input_tokens": 30000})
+        self.assertIn("truncated", summary)
+        self.assertIn("all file paths were retained", summary)
+        self.assertIn("30000 (proxy tokenizer, not Jev's measured usage)", summary)
 
     def test_explicit_legacy_variants_keep_their_requests(self):
         for variant in ("A", "B", "C"):

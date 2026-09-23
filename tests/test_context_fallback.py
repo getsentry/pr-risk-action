@@ -13,6 +13,9 @@ from test_jev import PRICE, snapshot, success
 
 class ContextFallbackTests(unittest.TestCase):
     def setUp(self):
+        sleeper = patch("risk_pr_agent.jev.time.sleep")
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
         self.source = snapshot()
         self.source["files"][0].update(additions=1, deletions=1)
         self.source["pr_metadata"] = {"title": "Change widget", "description": "A bounded change",
