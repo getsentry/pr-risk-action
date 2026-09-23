@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -234,17 +235,167 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot["snapshot"]["kind"], "pr_head")
         self.assertEqual([item["path"] for item in snapshot["files"]], ["feature.py"])
 
-    def test_binary_and_missing_commit_are_explicitly_incomplete(self):
+    def test_binary_only_addition_has_inventory_without_payload(self):
+        self.put("file.txt", "base\n")
+        self.commit("base")
+        content = b"\x00\x01\xff"
+        self.put("image.bin", content)
+        head = self.commit("binary")
+        snapshot = prepare_snapshot(row(1, merge_commit_sha=head), str(self.repo))
+        self.assertEqual(snapshot["status"], "ready")
+        self.assertEqual(snapshot["missing"], [])
+        self.assertEqual(len(snapshot["files"]), 1)
+        file = snapshot["files"][0]
+        self.assertTrue(file["binary"])
+        self.assertEqual(file["content_metadata"], {
+            "before": {"kind": "absent", "size_bytes": None, "sha256": None},
+            "after": {"kind": "binary", "size_bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()},
+        })
+        self.assertIn("new file mode", file["patch"])
+        self.assertNotIn("GIT binary patch", file["patch"])
+        self.assertNotIn("literal ", file["patch"])
+        self.assertIsNone(file["after"])
+
+    def test_literal_binary_marker_phrases_keep_the_complete_text_diff(self):
+        self.put("guide.txt", "before\n")
+        base = self.commit("base")
+        content = "GIT binary patch\nBinary files a/example and b/example differ\n"
+        self.put("guide.txt", content)
+        head = self.commit("document binary markers")
+        snapshot = prepare_snapshot(row(1, merge_commit_sha=head), str(self.repo))
+        self.assertEqual(snapshot["status"], "ready")
+        file = snapshot["files"][0]
+        self.assertFalse(file["binary"])
+        self.assertNotIn("content_metadata", file)
+        self.assertEqual(file["after"], content)
+        self.assertEqual(file["patch"].strip(), self.git(
+            "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames",
+            "--binary", "--full-index", "--unified=3", base, head, "--", "guide.txt"))
+        self.assertIn("+GIT binary patch\n", file["patch"])
+        self.assertIn("+Binary files a/example and b/example differ\n", file["patch"])
+
+    def test_mixed_binary_changes_preserve_paths_hashes_and_complete_text_diff(self):
+        self.put("file.txt", "before\n")
+        self.put("modified.bin", b"\x00one")
+        self.put("old.bin", b"\x00renamed content")
+        self.put("deleted.bin", b"\x00deleted content")
+        base = self.commit("base")
+        self.put("file.txt", "after\n")
+        self.put("modified.bin", b"\x00two")
+        self.put("added.bin", b"\x00new content")
+        self.git("mv", "old.bin", "renamed.bin")
+        self.git("rm", "-q", "deleted.bin")
+        head = self.commit("mixed changes")
+        paths = ["file.txt", "modified.bin", "added.bin", "renamed.bin", "deleted.bin"]
+        snapshot = prepare_snapshot(row(1, merge_commit_sha=head, data_source="github_api",
+                                        metrics={"commits": 1, "changed_files": 5, "additions": 1, "deletions": 1},
+                                        files_authoritative=True, files=[{"filename": path} for path in paths]), str(self.repo))
+        self.assertEqual(snapshot["status"], "ready", snapshot["missing"])
+        files = {file["path"]: file for file in snapshot["files"]}
+        self.assertEqual(set(files), set(paths))
+        self.assertEqual(files["file.txt"]["patch"].strip(), self.git(
+            "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames",
+            "--binary", "--full-index", "--unified=3", base, head, "--", "file.txt"))
+        self.assertFalse(files["file.txt"]["binary"])
+        modified = files["modified.bin"]["content_metadata"]
+        self.assertEqual(modified["before"]["size_bytes"], modified["after"]["size_bytes"])
+        self.assertEqual(modified["before"]["sha256"], hashlib.sha256(b"\x00one").hexdigest())
+        self.assertEqual(modified["after"]["sha256"], hashlib.sha256(b"\x00two").hexdigest())
+        self.assertNotEqual(modified["before"]["sha256"], modified["after"]["sha256"])
+        renamed = files["renamed.bin"]
+        self.assertEqual(renamed["status"], "renamed")
+        self.assertEqual(renamed["previous_path"], "old.bin")
+        self.assertEqual(renamed["content_metadata"]["before"], renamed["content_metadata"]["after"])
+        self.assertIn("rename from old.bin", renamed["patch"])
+        self.assertIn("rename to renamed.bin", renamed["patch"])
+        self.assertEqual(files["deleted.bin"]["status"], "removed")
+        self.assertEqual(files["deleted.bin"]["content_metadata"]["after"],
+                         {"kind": "absent", "size_bytes": None, "sha256": None})
+        self.assertEqual(files["added.bin"]["content_metadata"]["before"]["kind"], "absent")
+        for file in files.values():
+            if file["binary"]:
+                self.assertNotIn("GIT binary patch", file["patch"])
+                self.assertNotIn("literal ", file["patch"])
+
+    def test_text_binary_transitions_keep_readable_sides_and_distinguish_empty_from_absent(self):
+        self.put("file.dat", b"")
+        self.commit("empty text")
+        self.put("file.dat", b"\x00payload")
+        head = self.commit("binary")
+        binary = prepare_snapshot(row(1, merge_commit_sha=head), str(self.repo))
+        self.assertEqual(binary["status"], "ready")
+        file = binary["files"][0]
+        self.assertEqual(file["before"], "")
+        self.assertIsNone(file["after"])
+        self.assertEqual(file["content_metadata"]["before"],
+                         {"kind": "text", "size_bytes": 0, "sha256": hashlib.sha256(b"").hexdigest()})
+        self.assertEqual(file["content_metadata"]["after"]["kind"], "binary")
+        self.put("file.dat", "enabled = True\n")
+        restored = prepare_snapshot(row(2, merge_commit_sha=self.commit("restore text")), str(self.repo))
+        self.assertEqual(restored["status"], "ready")
+        file = restored["files"][0]
+        self.assertTrue(file["binary"])
+        self.assertIsNone(file["before"])
+        self.assertEqual(file["after"], "enabled = True\n")
+        self.assertEqual(file["content_metadata"]["before"]["kind"], "binary")
+        self.assertEqual(file["content_metadata"]["after"]["kind"], "text")
+
+    def test_non_utf8_hunks_are_replaced_with_headers_without_losing_line_counts(self):
+        self.put("file.txt", b"old secret \xe9\n")
+        self.commit("old non-UTF8 text")
+        self.put("file.txt", b"new secret \xe9\n")
+        snapshot = prepare_snapshot(row(1, merge_commit_sha=self.commit("new non-UTF8 text"),
+                                        data_source="github_api",
+                                        metrics={"commits": 1, "changed_files": 1, "additions": 1, "deletions": 1}), str(self.repo))
+        self.assertEqual(snapshot["status"], "ready", snapshot["missing"])
+        file = snapshot["files"][0]
+        self.assertTrue(file["binary"])
+        self.assertIsNone(file["before"])
+        self.assertIsNone(file["after"])
+        self.assertEqual((file["additions"], file["deletions"]), (1, 1))
+        self.assertEqual(file["content_metadata"]["before"]["kind"], "binary")
+        self.assertEqual(file["content_metadata"]["after"]["kind"], "binary")
+        self.assertIn("diff --git", file["patch"])
+        self.assertNotIn("@@", file["patch"])
+        self.assertNotIn("secret", file["patch"])
+        self.assertNotIn("\ufffd", file["patch"])
+
+    def test_git_declared_binary_keeps_utf8_content_and_mode_headers(self):
+        self.put(".gitattributes", "*.dat binary\n")
+        self.put("file.dat", "old text\n")
+        self.commit("base")
+        self.put("file.dat", "new text\n")
+        self.git("update-index", "--chmod=+x", "file.dat")
+        (self.repo / "file.dat").chmod(0o755)
+        snapshot = prepare_snapshot(row(1, merge_commit_sha=self.commit("binary-marked text")), str(self.repo))
+        self.assertEqual(snapshot["status"], "ready")
+        file = snapshot["files"][0]
+        self.assertTrue(file["binary"])
+        self.assertEqual((file["before"], file["after"]), ("old text\n", "new text\n"))
+        self.assertEqual(file["content_metadata"]["before"]["kind"], "text")
+        self.assertEqual(file["content_metadata"]["after"]["kind"], "text")
+        self.assertIn("old mode 100644", file["patch"])
+        self.assertIn("new mode 100755", file["patch"])
+        self.assertNotIn("GIT binary patch", file["patch"])
+        self.assertNotIn("new text", file["patch"])
+
+    def test_missing_commit_or_blob_remains_incomplete(self):
         self.put("file.txt", "base\n")
         self.commit("base")
         self.put("image.bin", b"\x00\x01\xff")
         head = self.commit("binary")
-        snapshot = prepare_snapshot(row(1, merge_commit_sha=head), str(self.repo))
-        self.assertEqual(snapshot["status"], "incomplete")
-        self.assertTrue(snapshot["files"][0]["binary"])
-        self.assertTrue(snapshot["missing"])
         unavailable = prepare_snapshot(row(2, merge_commit_sha="f" * 40), str(self.repo))
         self.assertEqual(unavailable["status"], "incomplete")
+        with patch("risk_pr_agent.dataset._blobs", return_value={}):
+            unavailable = prepare_snapshot(row(1, merge_commit_sha=head), str(self.repo))
+        self.assertEqual(unavailable["status"], "incomplete")
+        self.assertIn("blob_unavailable:image.bin", unavailable["missing"])
+        self.assertNotIn("content_metadata", unavailable["files"][0])
+        blob_sha = self.git("rev-parse", f"{head}:image.bin")
+        (self.repo / ".git" / "objects" / blob_sha[:2] / blob_sha[2:]).unlink()
+        unavailable = prepare_snapshot(row(1, merge_commit_sha=head), str(self.repo))
+        self.assertEqual(unavailable["status"], "incomplete")
+        self.assertTrue(unavailable["missing"])
 
     def test_rebased_pr_includes_first_security_commit_and_final_docs_commit(self):
         self.put("auth.py", "allow = False\n")

@@ -1,9 +1,11 @@
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from risk_pr_agent.input_eval import prepare_input_eval, pr_metadata
+from risk_pr_agent.jev import build_request, score_snapshots
 
 
 class InputEvaluationDatasetTests(unittest.TestCase):
@@ -49,6 +51,32 @@ class InputEvaluationDatasetTests(unittest.TestCase):
         self.assertFalse(synthetic["description_available"])
         self.assertIsNone(synthetic["description"])
         self.assertIsNone(pr_metadata({})["captured_at"])
+
+    def test_binary_metadata_survives_export_without_reference_leakage(self):
+        metadata = {
+            "before": {"kind": "text", "size_bytes": 6, "sha256": hashlib.sha256(b"old()\n").hexdigest()},
+            "after": {"kind": "binary", "size_bytes": 4, "sha256": hashlib.sha256(b"\x00new").hexdigest()},
+        }
+        self.snapshot["files"][0].update(binary=True, after=None, patch="diff --git a/src/main.py b/src/main.py\n",
+                                         content_metadata={**metadata, "outcome": "PRIVATE_OUTCOME"})
+        self.snapshot["files"][0]["content_metadata"]["after"] = {**metadata["after"], "reference": "PRIVATE_REFERENCE"}
+        calls = []
+        def worker(request):
+            calls.append(request)
+            return {"status": "ok", "risk_label": "medium", "probabilities": {"low": .1, "medium": .8, "high": .1}}
+        with tempfile.TemporaryDirectory() as out:
+            manifest = prepare_input_eval([self.snapshot], [self.reference], [self.raw], ["example/cli"], out)
+            contents = Path(manifest["inputs"]["dev"]).read_text()
+            exported = json.loads(contents)
+            self.assertNotIn("PRIVATE_", contents)
+            self.assertEqual(exported["files"][0]["content_metadata"], metadata)
+            result = score_snapshots([exported], Path(out, "scored"), worker=worker, price_snapshot={"status": "unavailable"})[0]
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["state"]["files"][0]["before"], "old()\n")
+            self.assertEqual(calls[0]["state"]["files"][0]["content_not_inspected"], ["after"])
+            original = {**self.snapshot, "pr_metadata": exported["pr_metadata"]}
+            self.assertEqual(result["request_hash"], build_request(original)["request_hash"])
 
     def test_later_git_row_cannot_replace_actual_description(self):
         with tempfile.TemporaryDirectory() as out:

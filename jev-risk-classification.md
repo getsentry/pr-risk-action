@@ -2,7 +2,9 @@
 
 Risk describes the change's plausible regression paths, production impact, reach and recovery. It supports deciding how much review a PR needs. It is not a claim that a bug exists, and the classifier does not perform or authorize a merge.
 
-## Risk boundaries (rubric 2)
+## Risk boundaries (rubric 3)
+
+Rubric 3 keeps the class boundaries from rubric 2 and adds instructions for evidence whose binary contents were not inspected. Earlier rubric-2 experiments remain historical development evidence; they do not validate the new binary-aware request.
 
 | Label | Meaning | Examples |
 | --- | --- | --- |
@@ -14,7 +16,9 @@ A new feature is not automatically high. Consider whether it changes existing be
 
 ## Evidence sent to Jev
 
-The default `metadata-diff` profile sends the PR title/description, changed paths/status (including previous paths for renames), additions/deletions per file and totals, and the complete diff. `score`, `build`, `score-pr` and the Python request/scoring APIs resolve omitted context options to this same input. The explicit profile has the same request and cache identity as the evaluated configuration. Selecting it as the standard input does not change the risk rubric or count as a passed holdout evaluation.
+The default `metadata-diff` profile sends the PR title/description, changed paths/status (including previous paths for renames), additions/deletions per file and totals, and the complete text diff. `score`, `build`, `score-pr` and the Python request/scoring APIs resolve omitted context options to this same input. Omitted and explicit profile options have the same request and cache identity at the current versions; context 6/rubric 3 intentionally invalidate the earlier evaluation cache. Selecting this input does not count as a passed holdout evaluation.
+
+Binary and non-UTF-8 files contribute Git headers and per-side kinds, byte sizes and SHA-256 hashes. The request explicitly lists uninspected binary sides and includes any readable text side in full, even during optional-content fallback. Binary-only PRs can be classified from this evidence; binary presence and zero textual line counts do not imply a risk class. Missing Git objects or incomplete binary metadata still leave the PR unclassified.
 
 The default makes one context attempt, with explicit transient retries. Missing required metadata, an oversized essential diff or a provider context rejection produces an explicit status without a label. It does not truncate the diff or switch to metadata-only input. Captured empty descriptions are valid; unknown descriptions remain unavailable.
 

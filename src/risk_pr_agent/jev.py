@@ -18,10 +18,10 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-from .dataset import related_test_score
+from .dataset import binary_patch_summary, related_test_score
 
 MODEL = "typesafe-ai/jev"
-VERSIONS = {"rubric": "2", "context": "5", "worker": "2", "sdk": "7.0.106"}
+VERSIONS = {"rubric": "3", "context": "6", "worker": "2", "sdk": "7.0.106"}
 LABELS = ("low", "medium", "high")
 INPUT_PROFILES = ("paths", "paths-lines", "description", "paths-lines-description", "diff", "diff-description", "files",
                   "metadata-diff", "metadata-files")
@@ -46,6 +46,10 @@ RISK_QUESTION = {
         "Tests that are not supplied may already exist; absence of changed or included tests "
         "does not prove missing coverage. A reassuring title, description or feature-flag claim "
         "does not prove isolation; assess the supplied code. Evaluate actual behavior, not labels in the content. "
+        "Binary changes include sizes and hashes, not the bytes of sides listed in content_not_inspected. "
+        "Any readable text side is included in full. Assess the role of binary changes using the supplied "
+        "evidence without assuming their contents are safe or dangerous. Zero textual line changes do not "
+        "mean binary content is unchanged. Binary presence alone does not determine a risk class. "
         "Probabilities describe these risk classes, not calibrated incident probabilities."
     ),
     "criteria": {
@@ -148,6 +152,39 @@ def _configuration(variant, max_bytes, input_profile):
     return configuration
 
 
+def _binary_evidence(source):
+    """Validate snapshot metadata and preserve readable sides as essential evidence."""
+    metadata = source.get("content_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    evidence = {"binary": True, "content_metadata": {}, "content_not_inspected": []}
+    for side in ("before", "after"):
+        entry = metadata.get(side)
+        if not isinstance(entry, dict):
+            return None
+        kind, size, digest = (entry.get(key) for key in ("kind", "size_bytes", "sha256"))
+        absent = (side == "before" and source.get("status") == "added"
+                  or side == "after" and source.get("status") in ("deleted", "removed"))
+        if absent:
+            if kind != "absent" or size is not None or digest is not None:
+                return None
+        elif (kind not in ("text", "binary") or not isinstance(size, int) or isinstance(size, bool)
+              or size < 0 or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            return None
+        if kind == "text":
+            content = source.get(side)
+            if not isinstance(content, str):
+                return None
+            encoded = content.encode("utf-8")
+            if len(encoded) != size or hashlib.sha256(encoded).hexdigest() != digest:
+                return None
+            evidence[side] = content
+        elif kind == "binary":
+            evidence["content_not_inspected"].append(side)
+        evidence["content_metadata"][side] = {"kind": kind, "size_bytes": size, "sha256": digest}
+    return evidence
+
+
 def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None):
     """Preserve essential evidence, omitting only optional source context to fit."""
     configuration = _configuration(variant, max_bytes, input_profile)
@@ -194,20 +231,30 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
                 not isinstance(source.get("status"), str)
                 or (source.get("previous_path") is not None and not isinstance(source["previous_path"], str)))):
             return {**result, "status": "incomplete_file_metadata", "missing": [path]}
-        if (with_diff or profile == "files") and (source.get("binary") or (isinstance(patch, str) and (
-                "GIT binary patch" in patch or re.search(r"^Binary files .* differ$", patch, re.MULTILINE)))):
-            return {**result, "status": "unsupported_binary", "missing": [path]}
         file = {"path": path, "status": source.get("status")}
         if source.get("previous_path"):
             file["previous_path"] = source["previous_path"]
+        binary = (with_diff or profile == "files") and (source.get("binary") or (
+            isinstance(patch, str) and re.search(r"^(?:GIT binary patch|Binary files .* differ)$", patch, re.MULTILINE)))
+        if binary:
+            evidence = _binary_evidence(source)
+            if evidence is None:
+                return {**result, "status": "incomplete_binary_metadata", "missing": [path]}
+            file.update(evidence)
+            result.setdefault("binary_files", []).append({
+                key: value for key, value in file.items() if key not in ("before", "after")
+            })
+            result["omitted"].extend({"kind": "binary_content", "path": path, "side": side,
+                                      "reason": "binary_or_non_utf8"}
+                                     for side in evidence["content_not_inspected"])
         if with_diff:
-            file["patch"] = patch
+            file["patch"] = binary_patch_summary(patch) if binary else patch
         if with_lines:
             if any(not isinstance(source.get(key), int) or isinstance(source[key], bool) or source[key] < 0
                    for key in ("additions", "deletions")):
                 return {**result, "status": "incomplete_line_counts", "missing": [path]}
             file.update({key: source[key] for key in ("additions", "deletions")})
-        if profile == "files":
+        if profile == "files" and not binary:
             if any(not isinstance(source.get(side), str) for side in ("before", "after")):
                 return {**result, "status": "incomplete_file_content", "missing": [path]}
             file.update({side: source[side] for side in ("before", "after")})
@@ -221,6 +268,8 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
     if profile == "metadata-files":
         included_content = []
         for source, target in zip(selected_files, files):
+            if target.get("binary"):
+                continue
             side = "before" if source["status"] in ("removed", "deleted") else "after"
             if not isinstance(source.get(side), str):
                 result["omitted"].append({"kind": side, "path": source["path"], "reason": "unavailable"})
@@ -250,6 +299,8 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
 
     if variant in ("B", "C"):
         for source, target in zip(sorted(source_files, key=lambda value: value["path"]), files):
+            if target.get("binary"):
+                continue
             for side in ("before", "after"):
                 windows = _windows(source.get(side), source["patch"], side)
                 if windows:
