@@ -25,7 +25,7 @@ from .github import RepoRef, normalize_pr, parse_github_time, pr_metadata, read_
 
 
 DATASET_VERSION = 2
-SNAPSHOT_VERSION = 5
+SNAPSHOT_VERSION = 6
 RUBRIC_VERSION = "jev-risk-v1"
 DEFAULT_REPOS = ("getsentry/sentry", "getsentry/cli", "getsentry/sentry-mcp", "getsentry/snuba")
 STRATA = ("docs", "tests", "mechanical", "auth", "migration", "config", "large", "functional")
@@ -226,6 +226,19 @@ def _text(blob: Optional[bytes]) -> Optional[str]:
         return None
 
 
+def binary_patch_summary(patch: str) -> str:
+    """Keep Git headers without binary payloads or unreadable text hunks."""
+    headers = ("diff --git ", "index ", "old mode ", "new mode ", "deleted file mode ",
+               "new file mode ", "similarity index ", "dissimilarity index ",
+               "rename from ", "rename to ", "copy from ", "copy to ", "--- ", "+++ ")
+    lines = []
+    for line in patch.splitlines(keepends=True):
+        if not line.startswith(headers):
+            break
+        lines.append(line)
+    return "".join(lines)
+
+
 @lru_cache(maxsize=65536)
 def _is_test_source_path(path: str) -> bool:
     parsed = PurePosixPath(path)
@@ -389,11 +402,10 @@ def prepare_snapshot(row: Dict[str, Any], git_repo: Optional[str]) -> Dict[str, 
             before_blob = blobs.get(f"{base}:{previous or path}") if code[0] != "A" else b""
             after_blob = blobs.get(f"{head}:{path}") if code[0] != "D" else b""
             before, after = _text(before_blob), _text(after_blob)
-            binary = b"GIT binary patch" in patch or before is None or after is None
-            if before_blob is None or after_blob is None:
+            binary = bool(re.search(br"(?m)^(?:GIT binary patch|Binary files .* differ)$", patch)) or before is None or after is None
+            unavailable = before_blob is None or after_blob is None
+            if unavailable:
                 result["missing"].append(f"blob_unavailable:{path}")
-            if binary:
-                result["missing"].append(f"binary_or_non_utf8:{path}")
             additions, deletions = 0, 0
             in_hunk = False
             for line in patch.splitlines():
@@ -402,7 +414,20 @@ def prepare_snapshot(row: Dict[str, Any], git_repo: Optional[str]) -> Dict[str, 
                 elif in_hunk:
                     additions += int(line.startswith(b"+"))
                     deletions += int(line.startswith(b"-"))
-            result["files"].append({"path": path, "previous_path": previous, "status": {"A": "added", "D": "removed", "R": "renamed", "C": "copied", "T": "type_changed"}.get(code[0], "modified"), "patch": patch.decode("utf-8", "replace"), "binary": binary, "before": before, "after": after, "additions": additions, "deletions": deletions})
+            patch_text = patch.decode("utf-8", "replace")
+            file = {"path": path, "previous_path": previous, "status": {"A": "added", "D": "removed", "R": "renamed", "C": "copied", "T": "type_changed"}.get(code[0], "modified"), "patch": binary_patch_summary(patch_text) if binary else patch_text, "binary": binary, "before": before, "after": after, "additions": additions, "deletions": deletions}
+            if binary and not unavailable:
+                file["content_metadata"] = {}
+                for side, blob, content, present in (
+                    ("before", before_blob, before, code[0] != "A"),
+                    ("after", after_blob, after, code[0] != "D"),
+                ):
+                    file["content_metadata"][side] = {
+                        "kind": "absent" if not present else "text" if content is not None else "binary",
+                        "size_bytes": len(blob) if present else None,
+                        "sha256": hashlib.sha256(blob).hexdigest() if present else None,
+                    }
+            result["files"].append(file)
         # Earlier REST collections predate data_source but retain GitHub IDs.
         authoritative = row.get("data_source") == "github_api" or row.get("id") is not None
         if row.get("metrics_authoritative") or authoritative:

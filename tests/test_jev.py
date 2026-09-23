@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import io
 import json
 import subprocess
@@ -22,6 +23,19 @@ def snapshot():
                    "before": "old()\n", "after": "new()\n", "additions": 1, "deletions": 1}],
         "repository_context": {"tree": ["src/widget.py", "src/other.py", "unrelated/file.py"], "files": []},
     }
+
+
+def binary_file(before=b"\x00old", after=b"\x00new", status="modified"):
+    file = {"path": "assets/widget.bin", "status": status, "binary": True,
+            "patch": "diff --git a/assets/widget.bin b/assets/widget.bin\nGIT binary patch\nliteral 4\nPAYLOAD\n",
+            "additions": 0, "deletions": 0, "content_metadata": {}}
+    for side, value in (("before", before), ("after", after)):
+        blob = value.encode() if isinstance(value, str) else value
+        kind = "absent" if value is None else "text" if isinstance(value, str) else "binary"
+        file[side] = value if isinstance(value, str) else "" if value is None else None
+        file["content_metadata"][side] = {"kind": kind, "size_bytes": len(blob) if blob is not None else None,
+                                          "sha256": hashlib.sha256(blob).hexdigest() if blob is not None else None}
+    return file
 
 
 PRICE = {"status": "ok", "input_usd_per_token": .000000042, "output_usd_per_token": 0}
@@ -99,8 +113,8 @@ class RequestTests(unittest.TestCase):
         self.assertIn({"kind": "tree", "reason": "snapshot_selection_limit", "count": 500}, result["omitted"])
         self.assertTrue(any(item.get("path") == "tests/test_widget.py" for item in result["omitted"]))
 
-    def test_binary_missing_and_incomplete_fail_closed(self):
-        for mutation, expected in (({"binary": True}, "unsupported_binary"), ({"patch": None}, "incomplete_diff")):
+    def test_missing_binary_metadata_and_incomplete_diff_fail_closed(self):
+        for mutation, expected in (({"binary": True}, "incomplete_binary_metadata"), ({"patch": None}, "incomplete_diff")):
             source = snapshot()
             source["files"][0].update(mutation)
             self.assertEqual(build_request(source)["status"], expected)
@@ -126,6 +140,104 @@ class RequestTests(unittest.TestCase):
         self.assertNotIn("risk_label", result)
         self.assertIn("untrusted", result["request"]["questions"]["risk"]["instructions"])
         self.assertEqual(set(result["request"]["questions"]), {"risk"})
+
+
+class BinaryRequestTests(unittest.TestCase):
+    def test_mixed_pr_preserves_text_diff_and_only_binary_metadata(self):
+        source = snapshot()
+        binary = binary_file()
+        binary.update(outcome="SECRET", risk_label="SECRET")
+        binary["content_metadata"]["after"]["outcome"] = "SECRET"
+        source["files"].append(binary)
+        built = build_request(source)
+        self.assertEqual(built["status"], "ready")
+        files = built["request"]["state"]["files"]
+        self.assertEqual(files[1]["patch"], source["files"][0]["patch"])
+        self.assertEqual(files[0]["content_not_inspected"], ["before", "after"])
+        self.assertEqual(files[0]["content_metadata"]["after"]["size_bytes"], 4)
+        self.assertEqual(files[0]["content_metadata"]["after"]["sha256"], hashlib.sha256(b"\x00new").hexdigest())
+        self.assertNotIn("before", files[0])
+        for excluded in ("PAYLOAD", "GIT binary patch", "SECRET"):
+            self.assertNotIn(excluded, json.dumps(built))
+        self.assertEqual({item["side"] for item in built["omitted"]}, {"before", "after"})
+        self.assertNotIn("risk_label", built)
+
+    def test_binary_only_add_delete_rename_and_empty_text_sides(self):
+        for file, uninspected in ((binary_file(), ["before", "after"]),
+                                 (binary_file(before=None, status="added"), ["after"]),
+                                 (binary_file(after=None, status="deleted"), ["before"]),
+                                 ({**binary_file(status="renamed"), "previous_path": "old.bin"}, ["before", "after"]),
+                                 (binary_file(before=""), ["after"])):
+            with self.subTest(status=file["status"], before=file["before"]):
+                source = snapshot()
+                source["files"] = [file]
+                built = build_request(source)
+                self.assertEqual(built["status"], "ready")
+                actual = built["request"]["state"]["files"][0]
+                self.assertEqual(actual["content_not_inspected"], uninspected)
+                self.assertEqual(actual["content_metadata"], file["content_metadata"])
+                if "previous_path" in file:
+                    self.assertEqual(actual["previous_path"], "old.bin")
+
+    def test_readable_transition_sides_are_essential_across_content_profiles(self):
+        for before, after in (("old_behavior()\n", b"\x00new"), (b"\x00old", "new_behavior()\n"), ("old\n", "new\n")):
+            for options in ({}, {"input_profile": "files"}, {"input_profile": "metadata-files"},
+                            {"input_profile": "metadata-files", "context_stage": "diff_only"}, {"variant": "B"}, {"variant": "C"}):
+                with self.subTest(before=before, after=after, options=options):
+                    source = snapshot()
+                    source["files"] = [binary_file(before, after)]
+                    built = build_request(source, **options)
+                    self.assertEqual(built["status"], "ready")
+                    actual = built["request"]["state"]["files"][0]
+                    for side, value in (("before", before), ("after", after)):
+                        if isinstance(value, str):
+                            self.assertEqual(actual[side], value)
+                        else:
+                            self.assertNotIn(side, actual)
+                    rejected = build_request(source, max_bytes=built["request_bytes"] - 1, **options)
+                    self.assertTrue(rejected["status"].endswith("exceeds_budget"))
+                    self.assertNotIn("request", rejected)
+
+    def test_invalid_binary_metadata_never_calls_provider(self):
+        cases = [None, {}, {"before": {"kind": "binary"}},
+                 {**binary_file()["content_metadata"], "after": {"kind": "binary", "size_bytes": True, "sha256": "a" * 64}},
+                 binary_file(before=None, status="added")["content_metadata"],
+                 binary_file(before="text")["content_metadata"]]
+        for metadata in cases:
+            source = snapshot()
+            source["files"] = [{**binary_file(), "content_metadata": metadata}]
+            with self.subTest(metadata=metadata), tempfile.TemporaryDirectory() as out:
+                row = score_snapshots([source], out, worker=lambda _: self.fail("must not infer"), price_snapshot=PRICE)[0]
+                self.assertEqual(row["status"], "incomplete_binary_metadata")
+                self.assertIsNone(row["risk_label"])
+
+    def test_binary_patch_marker_in_added_text_is_not_a_binary_change(self):
+        source = snapshot()
+        source["files"][0]["patch"] += "+GIT binary patch\n+Binary files a and b differ\n"
+        built = build_request(source)
+        self.assertEqual(built["status"], "ready")
+        self.assertEqual(built["request"]["state"]["files"][0]["patch"], source["files"][0]["patch"])
+        self.assertNotIn("binary_files", built)
+
+    def test_binary_hashes_invalidate_cache_and_inventory_is_persisted(self):
+        source = snapshot()
+        source["files"] = [binary_file()]
+        calls = []
+        def worker(request):
+            calls.append(request)
+            return success(risk_label="high", probabilities={"low": .1, "medium": .1, "high": .8})
+        with tempfile.TemporaryDirectory() as out:
+            first = score_snapshots([source], out, worker=worker, price_snapshot=PRICE)[0]
+            cached = score_snapshots([source], out, worker=worker, price_snapshot=PRICE)[0]
+            self.assertTrue(cached["cache_hit"])
+            source["files"] = [binary_file(after=b"\x00two")]
+            changed = score_snapshots([source], out, worker=worker, price_snapshot=PRICE)[0]
+            self.assertNotEqual(first["request_hash"], changed["request_hash"])
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(first["risk_label"], "high")
+            self.assertEqual(first["binary_files"][0]["content_not_inspected"], ["before", "after"])
+            self.assertNotIn("request", first)
+            self.assertNotIn("PAYLOAD", json.dumps(first))
 
 
 class InputProfileTests(unittest.TestCase):

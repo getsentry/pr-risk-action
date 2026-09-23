@@ -56,7 +56,9 @@ The Action verifies that the PR has not moved before publishing a classification
 
 The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label` and `status` outputs. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
 
-Missing evidence, unsupported binary diffs, the local size guard or provider context rejection produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Essential diffs are never truncated. The default guard is 1 MiB of serialized request, not the model token window. Automatic retries are bounded and individually accounted. Unknown usage or cost stays unknown.
+Binary and non-UTF-8 changes are supported, including PRs containing only binaries. Jev receives paths, change status, Git headers, and the size and SHA-256 of each available side. Binary bytes and encoded Git payloads are excluded; readable text sides of text/binary conversions are included in full. The request and JSON result identify the binary sides whose contents were not inspected. Binary presence alone does not impose a risk class.
+
+Missing Git objects or required evidence, invalid binary metadata, the local size guard or provider context rejection produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Essential text diffs and readable conversion sides are never truncated. The default guard is 1 MiB of serialized request, not the model token window. Automatic retries are bounded and individually accounted. Unknown usage or cost stays unknown.
 
 ## Development and evaluation
 
