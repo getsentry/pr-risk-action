@@ -21,7 +21,8 @@ from pathlib import Path, PurePosixPath
 from .dataset import binary_patch_summary, related_test_score
 
 MODEL = "typesafe-ai/jev"
-VERSIONS = {"rubric": "3", "context": "6", "worker": "2", "sdk": "7.0.106"}
+VERSIONS = {"rubric": "4", "context": "7", "worker": "2", "sdk": "7.0.106",
+            "token_estimator": "tiktoken-0.14.0-cl100k_base"}
 LABELS = ("low", "medium", "high")
 INPUT_PROFILES = ("paths", "paths-lines", "description", "paths-lines-description", "diff", "diff-description", "files",
                   "metadata-diff", "metadata-files")
@@ -47,9 +48,12 @@ RISK_QUESTION = {
         "does not prove missing coverage. A reassuring title, description or feature-flag claim "
         "does not prove isolation; assess the supplied code. Evaluate actual behavior, not labels in the content. "
         "Binary changes include sizes and hashes, not the bytes of sides listed in content_not_inspected. "
-        "Any readable text side is included in full. Assess the role of binary changes using the supplied "
+        "Readable text sides may also be supplied. Assess the role of binary changes using the supplied "
         "evidence without assuming their contents are safe or dangerous. Zero textual line changes do not "
         "mean binary content is unchanged. Binary presence alone does not determine a risk class. "
+        "When code_context marks truncation, code snippets are incomplete and some diffs may be absent; "
+        "the complete file inventory and PR metadata are retained. Omitted code is not evidence that "
+        "a file is unchanged or safe. Assess the available evidence and its limitations. "
         "Probabilities describe these risk classes, not calibrated incident probabilities."
     ),
     "criteria": {
@@ -186,17 +190,21 @@ def _binary_evidence(source):
 
 
 def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None):
-    """Preserve essential evidence, omitting only optional source context to fit."""
+    """Preserve metadata and bound standard diff context; retain legacy experiments."""
     configuration = _configuration(variant, max_bytes, input_profile)
     variant = configuration["variant"]
     input_profile = configuration.get("input_profile")
     max_bytes = configuration["max_bytes"]
     result = {"configuration": configuration, "configuration_hash": _hash(configuration), "omitted": []}
     profile = input_profile or "diff"
-    if context_stage is not None and (profile != "metadata-files" or context_stage not in ("full_files", "diff_only")):
-        raise ValueError("context_stage is only supported for metadata-files: full_files or diff_only")
+    stages = {"metadata-files": ("full_files", "diff_only"),
+              "metadata-diff": ("bounded_diff", "reduced_diff", "metadata_only")}
+    if context_stage is not None and context_stage not in stages.get(profile, ()):
+        raise ValueError("context_stage must be a supported stage for the selected input profile")
     if profile == "metadata-files":
         result["context_stage"] = context_stage or "full_files"
+    elif profile == "metadata-diff":
+        result["context_stage"] = context_stage or "bounded_diff"
     with_description = profile in ("description", "paths-lines-description", "diff-description", "metadata-diff", "metadata-files")
     with_lines = profile in ("paths-lines", "paths-lines-description", "metadata-diff", "metadata-files")
     with_diff = profile in ("diff", "diff-description", "metadata-diff", "metadata-files")
@@ -265,6 +273,17 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
         state["line_totals"] = {key: sum(file[key] for file in files) for key in ("additions", "deletions")}
     request = {"model": MODEL, "state": state, "questions": {"risk": copy.deepcopy(RISK_QUESTION)}, "providerOptions": {}}
     size = lambda: len(_json(request).encode("utf-8"))
+    if profile == "metadata-diff":
+        from .context_budget import fit_diff_context
+        fraction = {"bounded_diff": 1.0, "reduced_diff": 0.5, "metadata_only": 0.0}[result["context_stage"]]
+        fitted = fit_diff_context(request, max_bytes, diff_fraction=fraction)
+        result["omitted"].extend(fitted.pop("omitted", []))
+        result.update(fitted, request_bytes=size())
+        if result["status"] != "ready":
+            return result
+        return {**result, "request": request,
+                "request_hash": _hash({"request": request, "configuration": configuration,
+                                       "context_stage": result["context_stage"]})}
     if profile == "metadata-files":
         included_content = []
         for source, target in zip(selected_files, files):
@@ -459,18 +478,19 @@ def _sum_known(attempts, key, usage=False):
 
 
 def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
-                    worker=None, price_snapshot=None, max_attempts=3, timeout_ms=60000,
+                    worker=None, price_snapshot=None, max_attempts=4, timeout_ms=60000,
                     resume=True, candidate=True, input_profile=None):
     """Persist one result per PR, successful request cache and every explicit attempt.
 
     ``worker`` is an injectable callable taking the SDK request and returning the
     worker response. The default transport does not infer without a Gateway key.
     Interrupted attempts are accounted as unknown, never as free requests.
-    metadata-files may try two contexts; each has its own hash/cache/retry budget.
-    Only an explicit provider context rejection permits the second context.
+    Standard requests share four attempts across transient retries and bounded
+    context reductions. Legacy metadata-files keeps its per-context retry budget.
+    Only an explicit provider context rejection permits a smaller context.
     """
-    if max_attempts < 1 or max_attempts > 3:
-        raise ValueError("max_attempts must be between 1 and 3 (at most two retries)")
+    if max_attempts < 1 or max_attempts > 4:
+        raise ValueError("max_attempts must be between 1 and 4 (at most three retries)")
     configuration = _configuration(variant, max_bytes, input_profile)
     variant, max_bytes = configuration["variant"], configuration["max_bytes"]
     input_profile = configuration.get("input_profile")
@@ -490,9 +510,10 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
     _write(out / "price-snapshot.json", price)
     transport = worker if worker is not None else Worker(timeout_ms=timeout_ms)
 
-    def run_request(built, example_id):
+    def run_request(built, example_id, *, attempt_limit=None, retry_offset=0):
         """Resume/cache one exact request, retaining every billed or unknown attempt."""
         request_hash = built["request_hash"]
+        limit = max_attempts if attempt_limit is None else attempt_limit
         cache = out / "cache" / (request_hash + ".json")
         if resume and cache.exists():
             saved = json.loads(cache.read_text(encoding="utf-8"))
@@ -505,9 +526,11 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
             attempts.append(attempt)
         # Missing credentials do not consume an inference attempt.
         attempts = [attempt for attempt in attempts if attempt.get("status") != "missing_credentials"]
-        while len(attempts) < max_attempts and (not attempts or attempts[-1].get("retryable")):
+        while len(attempts) < limit and (not attempts or attempts[-1].get("retryable")):
             index = len(attempts) + 1
-            context = {key: built[key] for key in ("context_stage", "request_bytes") if key in built}
+            if index + retry_offset > 1:
+                time.sleep(10 * (index + retry_offset - 1))
+            context = {key: built[key] for key in ("context_stage", "request_bytes", "estimated_input_tokens") if key in built}
             start = {"event": "started", "request_hash": request_hash, "example_id": example_id,
                      "attempt": index, "started_at": _now(), "price_snapshot": price, **context}
             _append(journal, start)
@@ -522,8 +545,6 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                            attempt=index, finished_at=_now(), **context)
             _append(journal, attempt)
             attempts.append(attempt)
-            if attempt.get("retryable") and len(attempts) < max_attempts:
-                time.sleep(min(10 * 2 ** (index - 1), 20))
         if attempts and attempts[-1].get("status") == "ok":
             _write(cache, {"status": "ok", "request_hash": request_hash, "attempts": attempts})
         return attempts, False
@@ -543,12 +564,34 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
             cache_hit = False
             if built["status"] == "ready":
                 attempts, cache_hit = run_request(built, example_id)
-                if input_profile == "metadata-files":
+                if input_profile in ("metadata-diff", "metadata-files"):
                     row["context_attempts"] = [{
                         "context_stage": built["context_stage"], "request_hash": built["request_hash"],
                         "request_bytes": built["request_bytes"], "cache_hit": cache_hit,
                         "status": attempts[-1].get("status") if attempts else "not_attempted",
                     }]
+                if input_profile == "metadata-diff":
+                    for stage in ("reduced_diff", "metadata_only"):
+                        if (not attempts or attempts[-1].get("status") != "context_rejected"
+                                or len(attempts) >= max_attempts):
+                            break
+                        fallback = build_request(snapshot, variant=variant, max_bytes=max_bytes,
+                                                 input_profile=input_profile, context_stage=stage)
+                        row.setdefault("initial_request_hash", built["request_hash"])
+                        row["context_fallback_reason"] = "provider_context_rejected"
+                        row.update({key: value for key, value in fallback.items() if key != "request"})
+                        built = fallback
+                        if built["status"] != "ready":
+                            break
+                        reduced_attempts, cache_hit = run_request(
+                            built, example_id, attempt_limit=max_attempts - len(attempts),
+                            retry_offset=len(attempts))
+                        attempts += reduced_attempts
+                        row["context_attempts"].append({
+                            "context_stage": built["context_stage"], "request_hash": built["request_hash"],
+                            "request_bytes": built["request_bytes"], "cache_hit": cache_hit,
+                            "status": reduced_attempts[-1].get("status") if reduced_attempts else "not_attempted",
+                        })
                 if (input_profile == "metadata-files" and built["context_stage"] == "full_files"
                         and attempts and attempts[-1].get("status") == "context_rejected"):
                     fallback = build_request(snapshot, variant=variant, max_bytes=max_bytes,
@@ -564,7 +607,7 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                             "request_bytes": fallback["request_bytes"], "cache_hit": cache_hit,
                             "status": reduced_attempts[-1].get("status") if reduced_attempts else "not_attempted",
                         })
-                if attempts:
+                if attempts and built["status"] == "ready":
                     response = attempts[-1]
                     row.update({key: response.get(key) for key in ("status", "risk_label", "probabilities", "provider_confidence", "model_response", "probability_decimals", "error")})
                     if row["status"] != "ok":

@@ -70,11 +70,13 @@ def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
     environment.pop("GITHUB_OUTPUT", None)
     environment.pop("GITHUB_STEP_SUMMARY", None)
     try:
+        # Four 65-second worker deadlines plus 60 seconds of backoff need room
+        # for metadata collection, snapshot reconstruction and result writes.
         subprocess.run([
             sys.executable, "-m", "risk_pr_agent.cli", "score-pr",
             "--repo", repo.slug, "--pr", str(number), "--git-repo", str(directory / "target.git"),
             "--candidate", "--out", str(output), "--cache-dir", str(directory / "cache"),
-        ], cwd=directory, env=environment, check=True, capture_output=True, timeout=300)
+        ], cwd=directory, env=environment, check=True, capture_output=True, timeout=420)
     except (subprocess.SubprocessError, OSError):
         raise ActionError("scorer_failed") from None
     return json.loads(output.read_text(encoding="utf-8"))

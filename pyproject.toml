@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Offline PR risk dataset and evaluation tooling"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = ["tiktoken==0.14.0"]
 
 [project.scripts]
 risk-pr = "risk_pr_agent.cli:main"

@@ -50,7 +50,7 @@ def _inference_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--variant", choices=("A", "B", "C"), help="Explicit legacy context for reproducing A/B/C experiments")
     parser.add_argument("--input-profile", choices=INPUT_PROFILES,
                         help=f"Input fields (default: {DEFAULT_INPUT_PROFILE}); other profiles are optional experiments")
-    parser.add_argument("--max-bytes", type=int, help="Local serialized-request guard: 1 MiB for metadata-diff/files, 64 KiB for other profiles; not the model token limit")
+    parser.add_argument("--max-bytes", type=int, help="Additional serialized-request guard; standard input trims code while preserving metadata and its estimated token budget")
     parser.add_argument("--candidate", action="store_true", help="Explicitly run an unvalidated candidate")
     parser.add_argument("--acceptance", help="Accepted held-out evaluation receipt")
     parser.add_argument("--dry-run", action="store_true", help="Prepare requests without inference or credentials")
@@ -241,6 +241,9 @@ def _score(rows, args, out_dir):
                                    request_bytes=prepared.get("request_bytes"), request=prepared.get("request"))
                 if "context_stage" in prepared:
                     results[-1]["context_stage"] = prepared["context_stage"]
+                for key in ("context_budget", "estimated_input_tokens", "diff_truncated"):
+                    if key in prepared:
+                        results[-1][key] = prepared[key]
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         write_jsonl(str(Path(out_dir) / "prepared.jsonl"), results)
         return results
@@ -302,6 +305,10 @@ def risk_summary(result: Dict[str, Any]) -> str:
              f"Context: `{result.get('input_profile') or result.get('variant', 'unknown')}`"]
     if result.get("probabilities"):
         lines.append("Class probabilities: " + ", ".join(f"{key}={value:.2f}" for key, value in result["probabilities"].items()))
+    if result.get("diff_truncated"):
+        lines.append("Code context was truncated to fit; PR metadata and all file paths were retained.")
+    if result.get("estimated_input_tokens") is not None:
+        lines.append(f"Estimated input tokens: {result['estimated_input_tokens']} (proxy tokenizer, not Jev's measured usage).")
     lines += ["", "Class probabilities describe the risk rubric, not incident likelihood."]
     return "\n".join(lines) + "\n"
 

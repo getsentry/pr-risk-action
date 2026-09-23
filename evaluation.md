@@ -4,7 +4,7 @@ Offline PR risk classification with [Typesafe AI Jev](https://vercel.com/changel
 
 Jev is currently an **evaluation candidate**. The public `score`, `build` and `score-pr` commands use the same engine and require `--candidate` until an accepted holdout receipt exists. Historical logistic/rule helpers remain only for frozen benchmark reproduction.
 
-The standard input is **paths/status, additions/deletions per file and totals, PR title/description, and the complete diff** (`metadata-diff`). It is the default for all three commands and the Python request/scoring APIs. Complete files and repository context are optional experiments.
+The standard input is **paths/status, additions/deletions per file and totals, PR title/description, and context-bounded diffs** (`metadata-diff`). It is the default for all three commands and the Python request/scoring APIs. Complete files and repository context are optional experiments.
 
 ## Setup
 
@@ -18,7 +18,7 @@ npm ci --prefix worker
 export GITHUB_TOKEN="$(gh auth token)"
 ```
 
-Put `AI_GATEWAY_API_KEY=...` in the root `.env`, or export it. Only that key is loaded from `.env`; existing environment values take precedence. Run commands from this checkout; the worker is not bundled into a standalone Python wheel. Without installation, use `PYTHONPATH=src python3 -m risk_pr_agent.cli` instead of `risk-pr`.
+Put `AI_GATEWAY_API_KEY=...` in the root `.env`, or export it. Only that key is loaded from `.env`; existing environment values take precedence. Run commands from this checkout; the worker is not bundled into a standalone Python wheel. With dependencies installed, `PYTHONPATH=src python3 -m risk_pr_agent.cli` can also run the source checkout.
 
 Run the chosen input configuration without profile flags:
 
@@ -26,7 +26,7 @@ Run the chosen input configuration without profile flags:
 risk-pr score --dataset data/low-review-v1 --candidate --out data/runs/metadata-diff
 ```
 
-Use `--dry-run` instead of `--candidate` to inspect the exact prepared requests without calling Jev. The default local request guard is 1 MiB, configurable with `--max-bytes`; it is not the model context window. If the complete diff cannot be sent, the result has an explicit failure status and no risk label.
+Use `--dry-run` instead of `--candidate` to inspect the exact prepared requests without calling Jev. The default local request guard is 1 MiB, configurable with `--max-bytes`; it is not the model context window. The default retains all PR metadata and deterministically trims code to fit this guard and a 30,000-token proxy estimate with a 2,000-token reserve. See [context limits and fallback](jev-risk-classification.md). Dry-run output records the estimate, truncation and omissions; actual Jev token usage is unknown until inference.
 
 ## Prepare the benchmark
 
@@ -50,7 +50,7 @@ Seed `jev-v1` selects 250 representative merged PRs per repo independently of ou
 
 `--refresh-metadata` caches authoritative GitHub spans and captured title/description for selected Git-derived rows. Use `--snapshot-metadata data/jev-v1/snapshot-metadata.json` to reuse the mapping offline. Existing per-PR metadata caches are immutable; older span-only caches do not establish that a description was captured. Required Git objects must exist in the supplied repositories. Missing objects, ambiguous rebase spans and inconsistent counts yield incomplete snapshots.
 
-Snapshots bind exact base/head SHAs and provenance. Merge reconstructions are explicitly marked as merge snapshots, never as opening-time snapshots. Multi-commit rebases use the original PR head and merge base when verifiable. Renames/deletions are preserved. Snapshot version 6 supports binary and non-UTF-8 changes with per-side `content_metadata` (`kind`, byte size and SHA-256); an absent side is distinct from an empty text file. Content profiles send this metadata and any readable text side, without binary bytes or Git binary payloads. They record `content_not_inspected` in the request and `binary_files` inventory in the result. Binary presence does not impose a class; genuinely missing Git objects still prevent classification. Request context version 6 and rubric version 3 invalidate older inference caches, and binary hashes distinguish same-size content changes. New snapshots also capture available PR title/description and their collection provenance; blind review packets exclude those fields. Metadata is refreshed when reusing the immutable Git snapshot cache.
+Snapshots bind exact base/head SHAs and provenance. Merge reconstructions are explicitly marked as merge snapshots, never as opening-time snapshots. Multi-commit rebases use the original PR head and merge base when verifiable. Renames/deletions are preserved. Snapshot version 6 supports binary and non-UTF-8 changes with per-side `content_metadata` (`kind`, byte size and SHA-256); an absent side is distinct from an empty text file. Content profiles send this metadata and any readable text side, without binary bytes or Git binary payloads. They record `content_not_inspected` in the request and `binary_files` inventory in the result. Binary presence does not impose a class; genuinely missing Git objects still prevent classification. Request context version 7 and rubric version 4 invalidate older inference caches, and binary hashes distinguish same-size content changes. New snapshots also capture available PR title/description and their collection provenance; blind review packets exclude those fields. Metadata is refreshed when reusing the immutable Git snapshot cache.
 
 Previously exported snapshots may lack this metadata. The standard input returns `description_unavailable` for them; reconstruct a new dataset from captured raw PR metadata or use an explicit legacy `--variant A` to reproduce the previous diff-only experiment. An observed empty description is valid; an uncollected description is not silently replaced with an empty one.
 
@@ -129,12 +129,14 @@ Use descriptive input profiles to change only the supplied fields, keeping the s
 | `diff` | Paths, status and complete diff; the input previously called A |
 | `diff-description` | Complete diff, paths, status, title and description |
 | `files` | Paths, status and complete before/after content of changed files |
-| `metadata-diff` (default) | Paths, line counts, title/description and complete diff |
-| `metadata-files` | Everything in `metadata-diff`, plus complete final file contents (previous contents for deleted files) |
+| `metadata-diff` (default) | Full paths, line counts, title/description and context-bounded diffs |
+| `metadata-files` | Paths, line counts, title/description, complete diff and complete final file contents (previous contents for deleted files) |
 
-Counts come from the reconstructed diff, not title heuristics. Each profile has an explicit field allowlist: risk references, outcomes, reviewer reasoning and history never enter the request. Missing required fields remain unavailable; no profile silently substitutes zero counts or trims essential diff to fit its byte budget. Profiles are separate experiments and cannot be combined with legacy B/C context variants.
+Counts come from the reconstructed diff, not title heuristics. Each profile has an explicit field allowlist: risk references, outcomes, reviewer reasoning and history never enter the request. Missing required fields remain unavailable; no profile silently substitutes zero counts. Only the default `metadata-diff` profile trims code, recording this explicitly while preserving metadata. Other profiles retain their complete-evidence requirements. Profiles are separate experiments and cannot be combined with legacy B/C context variants.
 
-The two `metadata-*` profiles default to a **1 MiB local guard**, allowing larger requests to reach Jev. `metadata-files` tries complete files first; an explicit provider context rejection triggers one reduced context with the complete diff and metadata. A local guard overflow can also remove optional file contents before sending. Omitted files and the final `context_stage` are recorded. If the complete diff is still too large, no label is produced. Network/auth errors never trigger context reduction. The two contexts have separate hashes/caches and their costs are accounted together, including unknown costs for rejected calls.
+The two `metadata-*` profiles default to a **1 MiB local guard**. The default also applies its token proxy budget and permits code truncation; protected metadata that still cannot fit produces no label. It allows four total calls, including context fallback, with 10/20/30-second waits. Transient retries keep the same request; only explicit context rejection reduces code. Each distinct request has a separate hash and journal. Report quality and coverage for truncated cases separately; prior complete-diff results do not establish their quality.
+
+The `metadata-files` experiment keeps its earlier evidence policy. It tries complete files first; an explicit provider context rejection triggers one reduced context with the complete diff and metadata. A local guard overflow can also remove optional file contents before sending. Omitted files and the final `context_stage` are recorded. If the complete diff is still too large, no label is produced. Network/auth errors never trigger context reduction. The two contexts have separate hashes/caches and their costs are accounted together, including unknown costs for rejected calls.
 
 ```bash
 risk-pr score --dataset data/input-ablation-v1 \
