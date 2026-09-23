@@ -52,6 +52,13 @@ def prepare_input_eval(snapshots, references, raw_rows, repos, out_dir):
         input_row = {key: copy.deepcopy(original[key]) for key in
                      ("schema_version", "snapshot_version", "example_id", "repo", "number", "split", "snapshot", "status", "missing", "strata") if key in original}
         input_row["files"] = [{key: copy.deepcopy(file[key]) for key in file_keys if key in file} for file in original.get("files", [])]
+        for source, target in zip(original.get("files", []), input_row["files"]):
+            metadata = source.get("content_metadata")
+            if isinstance(metadata, dict):
+                target["content_metadata"] = {
+                    side: {key: copy.deepcopy(entry[key]) for key in ("kind", "size_bytes", "sha256") if key in entry}
+                    for side in ("before", "after") if isinstance(entry := metadata.get(side), dict)
+                }
         context = original.get("repository_context") or {}
         input_row["repository_context"] = {
             "tree": copy.deepcopy(context.get("tree", [])),
