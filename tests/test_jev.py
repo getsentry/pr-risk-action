@@ -555,7 +555,7 @@ class InferenceTests(unittest.TestCase):
             row = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
             self.assertEqual(row["status"], "ok")
             self.assertEqual(row["input_profile"], DEFAULT_INPUT_PROFILE)
-            self.assertEqual(row["request_hash"], build_request(snapshot(), input_profile="metadata-diff")["request_hash"])
+            self.assertEqual(row["request_hash"], build_request(snapshot(), input_profile="metadata-diff", max_input_tokens=8000)["request_hash"])
             self.assertEqual(row["usage"]["input_tokens"], 120)
             self.assertAlmostEqual(row["reported_cost_usd"], .00000504)
             self.assertAlmostEqual(row["estimated_cost_usd"], .00000504)
@@ -586,7 +586,8 @@ class InferenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as out:
             row = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
             self.assertEqual(row["status"], "ok")
-            self.assertEqual([attempt["attempt"] for attempt in row["attempts"]], [1, 2, 3, 4])
+            self.assertEqual([attempt["overall_attempt"] for attempt in row["attempts"]], [1, 2, 3, 4])
+            self.assertEqual([attempt["attempt"] for attempt in row["attempts"]], [1, 1, 1, 2])
             self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [10, 20, 30])
             cached = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
             self.assertTrue(cached["cache_hit"])
@@ -641,7 +642,7 @@ class InferenceTests(unittest.TestCase):
             row = score_snapshots([snapshot()], out, worker=worker, price_snapshot=PRICE)[0]
             self.assertEqual(row["status"], "ok")
             self.assertEqual(len(calls), 1)
-            self.assertEqual([attempt["attempt"] for attempt in row["attempts"]], [1, 2, 3, 4])
+            self.assertEqual([attempt["overall_attempt"] for attempt in row["attempts"]], [1, 2, 3, 4])
             self.sleep.assert_called_once_with(30)
 
     def test_nonretryable_error_does_not_wait_or_retry(self):

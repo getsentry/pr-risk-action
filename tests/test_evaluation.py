@@ -275,6 +275,15 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(operations["costs"]["estimated_usd"]["unknown_count"], 2)
         self.assertEqual(operations["usage"]["input_tokens"]["unknown_attempts"], 1)
 
+    def test_retries_include_changed_context_requests(self):
+        row = prediction("a", "low")
+        row["attempts"] = [{"request_hash": request_hash, "overall_attempt": index,
+                            "status": "ok" if index == 4 else "provider_error"}
+                           for index, request_hash in enumerate(("full", "8k", "4k", "4k"), 1)]
+        report = evaluate_run([row], examples=[example("a")])
+        self.assertEqual(report["operations"]["attempts"], 4)
+        self.assertEqual(report["operations"]["retries"], 3)
+
     def test_known_cost_distribution_and_projection(self):
         report = evaluate_run([prediction("a", "low"), prediction("b", "low")], examples=[example("a"), example("b")])
         costs = report["operations"]["costs"]["reported_usd"]

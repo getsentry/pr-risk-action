@@ -275,8 +275,11 @@ def _operations(predictions: Dict[str, Dict[str, Any]], identifiers: Sequence[st
         row_attempts = row.get("attempts")
         if row_attempts is None:
             row_attempts = [row]  # Imported single-attempt records.
-        per_request = Counter(attempt.get("request_hash") for attempt in row_attempts)
-        retries += sum(max(0, count - 1) for count in per_request.values())
+        if row_attempts and all("overall_attempt" in attempt for attempt in row_attempts):
+            retries += sum(attempt["overall_attempt"] > 1 for attempt in row_attempts)
+        else:
+            per_request = Counter(attempt.get("request_hash") for attempt in row_attempts)
+            retries += sum(max(0, count - 1) for count in per_request.values())
         attempts.extend(row_attempts)
         if row.get("price_snapshot"):
             price_snapshots[_digest(row["price_snapshot"])] = row["price_snapshot"]

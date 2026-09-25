@@ -21,7 +21,7 @@ from pathlib import Path, PurePosixPath
 from .dataset import binary_patch_summary, related_test_score
 
 MODEL = "typesafe-ai/jev"
-VERSIONS = {"rubric": "4", "context": "7", "worker": "2", "sdk": "7.0.106",
+VERSIONS = {"rubric": "4", "context": "8", "worker": "2", "sdk": "7.0.106",
             "token_estimator": "tiktoken-0.14.0-cl100k_base"}
 LABELS = ("low", "medium", "high")
 INPUT_PROFILES = ("paths", "paths-lines", "description", "paths-lines-description", "diff", "diff-description", "files",
@@ -189,12 +189,18 @@ def _binary_evidence(source):
     return evidence
 
 
-def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None):
+def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None,
+                  max_input_tokens=None):
     """Preserve metadata and bound standard diff context; retain legacy experiments."""
     configuration = _configuration(variant, max_bytes, input_profile)
     variant = configuration["variant"]
     input_profile = configuration.get("input_profile")
     max_bytes = configuration["max_bytes"]
+    if max_input_tokens is not None:
+        from .context_budget import MODEL_LIMIT, RESERVE
+        if (input_profile != "metadata-diff" or type(max_input_tokens) is not int
+                or not 1 <= max_input_tokens <= MODEL_LIMIT - RESERVE):
+            raise ValueError("max_input_tokens requires metadata-diff and a positive budget within the model limit minus its reserve")
     result = {"configuration": configuration, "configuration_hash": _hash(configuration), "omitted": []}
     profile = input_profile or "diff"
     stages = {"metadata-files": ("full_files", "diff_only"),
@@ -276,14 +282,15 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
     if profile == "metadata-diff":
         from .context_budget import fit_diff_context
         fraction = {"bounded_diff": 1.0, "reduced_diff": 0.5, "metadata_only": 0.0}[result["context_stage"]]
-        fitted = fit_diff_context(request, max_bytes, diff_fraction=fraction)
+        fitted = fit_diff_context(request, max_bytes, diff_fraction=fraction, max_input_tokens=max_input_tokens)
         result["omitted"].extend(fitted.pop("omitted", []))
         result.update(fitted, request_bytes=size())
         if result["status"] != "ready":
             return result
         return {**result, "request": request,
                 "request_hash": _hash({"request": request, "configuration": configuration,
-                                       "context_stage": result["context_stage"]})}
+                                       "context_stage": result["context_stage"],
+                                       "max_input_tokens": result["context_budget"]["max_input_tokens"]})}
     if profile == "metadata-files":
         included_content = []
         for source, target in zip(selected_files, files):
@@ -487,7 +494,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
     Interrupted attempts are accounted as unknown, never as free requests.
     Standard requests share four attempts across transient retries and bounded
     context reductions. Legacy metadata-files keeps its per-context retry budget.
-    Only an explicit provider context rejection permits a smaller context.
+    Standard transient retries reduce the input budget to 8k, then 4k. Explicit
+    context rejections additionally reduce the code prefix, then remove code.
     """
     if max_attempts < 1 or max_attempts > 4:
         raise ValueError("max_attempts must be between 1 and 4 (at most three retries)")
@@ -530,7 +538,9 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
             index = len(attempts) + 1
             if index + retry_offset > 1:
                 time.sleep(10 * (index + retry_offset - 1))
-            context = {key: built[key] for key in ("context_stage", "request_bytes", "estimated_input_tokens") if key in built}
+            context = {key: built[key] for key in ("context_stage", "request_bytes", "estimated_input_tokens", "context_budget") if key in built}
+            if input_profile == "metadata-diff":
+                context["overall_attempt"] = index + retry_offset
             start = {"event": "started", "request_hash": request_hash, "example_id": example_id,
                      "attempt": index, "started_at": _now(), "price_snapshot": price, **context}
             _append(journal, start)
@@ -563,7 +573,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
             attempts = []
             cache_hit = False
             if built["status"] == "ready":
-                attempts, cache_hit = run_request(built, example_id)
+                attempts, cache_hit = run_request(
+                    built, example_id, attempt_limit=1 if input_profile == "metadata-diff" else None)
                 if input_profile in ("metadata-diff", "metadata-files"):
                     row["context_attempts"] = [{
                         "context_stage": built["context_stage"], "request_hash": built["request_hash"],
@@ -571,20 +582,31 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                         "status": attempts[-1].get("status") if attempts else "not_attempted",
                     }]
                 if input_profile == "metadata-diff":
-                    for stage in ("reduced_diff", "metadata_only"):
-                        if (not attempts or attempts[-1].get("status") != "context_rejected"
-                                or len(attempts) >= max_attempts):
+                    while attempts and len(attempts) < max_attempts:
+                        rejected = attempts[-1].get("status") == "context_rejected"
+                        if not rejected and not attempts[-1].get("retryable"):
                             break
+                        stage = built["context_stage"]
+                        if rejected:
+                            if stage == "metadata_only":
+                                break
+                            stage = "reduced_diff" if stage == "bounded_diff" else "metadata_only"
+                        token_limit = 8000 if len(attempts) == 1 else 4000
                         fallback = build_request(snapshot, variant=variant, max_bytes=max_bytes,
-                                                 input_profile=input_profile, context_stage=stage)
+                                                 input_profile=input_profile, context_stage=stage,
+                                                 max_input_tokens=token_limit)
                         row.setdefault("initial_request_hash", built["request_hash"])
-                        row["context_fallback_reason"] = "provider_context_rejected"
+                        if rejected:
+                            row["context_fallback_reason"] = "provider_context_rejected"
+                        else:
+                            row.setdefault("context_fallback_reason", "transient_error")
+                        row.pop("request_hash", None)
                         row.update({key: value for key, value in fallback.items() if key != "request"})
                         built = fallback
                         if built["status"] != "ready":
                             break
                         reduced_attempts, cache_hit = run_request(
-                            built, example_id, attempt_limit=max_attempts - len(attempts),
+                            built, example_id, attempt_limit=1 if token_limit == 8000 else max_attempts - len(attempts),
                             retry_offset=len(attempts))
                         attempts += reduced_attempts
                         row["context_attempts"].append({
