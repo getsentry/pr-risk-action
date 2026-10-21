@@ -18,7 +18,7 @@ jobs:
           python-version: "3.11"
       - uses: actions/setup-node@v6
         with:
-          node-version: "22.23.1"
+          node-version: "22.23.4"
       - name: Install
         run: python -m pip install -e .
       - name: Unit tests

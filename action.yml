@@ -40,7 +40,7 @@ runs:
       env:
         AI_GATEWAY_API_KEY: ""
       with:
-        node-version: "22.23.1"
+        node-version: "22.23.4"
 
     - name: Install trusted Jev worker
       shell: bash
