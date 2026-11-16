@@ -383,7 +383,6 @@ class LabelPublishingTests(RunnerTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(result, classification())
         transport.assert_not_called()
-        self.assertTrue(scorer.call_args.kwargs.get("share_github_token", True))
         output = (self.directory / "output").read_text()
         self.assertTrue(output.startswith("risk_label=low\nstatus=ok\nsummary<<"))
         self.assertTrue(output.endswith("\nlabel_published=false\n"))
@@ -417,7 +416,6 @@ class LabelPublishingTests(RunnerTestCase):
         self.assertEqual(result["status"], "ok")
         self.assertIn("risk_label=medium\n", output)
         self.assertTrue(output.endswith("\nlabel_published=true\n"))
-        self.assertFalse(scorer.call_args.kwargs["share_github_token"])
         allowed = {ISSUE_LABELS, REPO_LABELS} | {f"{ISSUE_LABELS}/{value}" for value in ENCODED.values()} | {
             f"{REPO_LABELS}/{value}" for value in ENCODED.values()}
         for _, url, _ in fake.calls:
@@ -523,23 +521,52 @@ class LabelPublishingTests(RunnerTestCase):
                 action_runner.main()
             self.assertEqual(run.call_args.kwargs["publish_label"], enabled)
 
-    def test_scorer_receives_github_token_only_when_publishing_is_off(self):
-        child = self.directory / "child"
-        child.mkdir()
-        seen = []
+    def test_scorer_environment_does_not_depend_on_publish_label(self):
+        seen = {}
 
-        def run(args, **kwargs):
-            seen.append(kwargs["env"])
-            Path(args[args.index("--out") + 1]).write_text(json.dumps(classification()))
+        for enabled in (False, True):
+            def run(args, **kwargs):
+                seen[enabled] = kwargs["env"]
+                Path(args[args.index("--out") + 1]).write_text(json.dumps(classification()))
 
-        with patch.dict(os.environ, {"GH_TOKEN": "gh-test-key"}), \
-                patch.object(action_runner.subprocess, "run", side_effect=run):
-            action_runner._run_scorer(RepoRef.parse("example/project"), 7, child)
-            action_runner._run_scorer(RepoRef.parse("example/project"), 7, child, share_github_token=False)
-        self.assertEqual(seen[0]["GITHUB_TOKEN"], "github-test-key")
-        for key in ("GITHUB_TOKEN", "GH_TOKEN"):
-            self.assertNotIn(key, seen[1])
-        self.assertEqual(seen[1]["AI_GATEWAY_API_KEY"], "gateway-test-key")
+            with patch.dict(os.environ, {"GH_TOKEN": "gh-test-key"}), \
+                    patch.object(labels, "default_transport", return_value=FakeGitHub()), \
+                    patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
+                    patch.object(action_runner, "_fetch_git"), \
+                    patch.object(action_runner.subprocess, "run", side_effect=run):
+                code, _, _ = self.invoke(publish_label=enabled)
+            self.assertEqual(code, 0)
+        self.assertEqual(seen[False], seen[True])
+        self.assertEqual(seen[True]["GITHUB_TOKEN"], "github-test-key")
+        self.assertEqual(seen[True]["GH_TOKEN"], "gh-test-key")
+
+    def test_failed_clean_up_after_move_is_retried_then_reported(self):
+        for failures, status in ((2, "pr_changed"), (3, "label_error")):
+            with self.subTest(failures=failures):
+                remaining = [failures]
+
+                def fail(method, url, body):
+                    if method == "DELETE" and ("added", "risk: low") in fake.events and remaining[0]:
+                        remaining[0] -= 1
+                        return 403
+                    return None
+
+                fake = FakeGitHub(fail=fail)
+                for path in ("summary", "output"):
+                    (self.directory / path).write_text("")
+                code, result, output, _, _ = self.run_enabled(
+                    fake, responses=[pull_request(), pull_request(), pull_request(), pull_request(head="d" * 40)])
+                summary = (self.directory / "summary").read_text()
+                self.assertEqual((code, result["status"], result["label_published"]), (1, status, False))
+                self.assertIsNone(result["risk_label"])
+                if failures == 3:
+                    self.assertIs(result["label_cleanup_failed"], True)
+                    self.assertEqual(fake.pr_labels, {"risk: low"})
+                    self.assertIn("A risk label may still be on the PR; the next run will clear it.", summary)
+                else:
+                    self.assertNotIn("label_cleanup_failed", result)
+                    self.assertEqual(fake.pr_labels, set())
+                    self.assertNotIn("may still be on the PR", summary)
 
 
 if __name__ == "__main__":

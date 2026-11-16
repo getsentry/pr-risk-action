@@ -121,6 +121,41 @@ class RiskLabelsTests(unittest.TestCase):
         self.assertEqual(fake.pr_labels, set())
         self.assertEqual(fake.calls[-1], ("DELETE", f"{ISSUE_LABELS}/{ENCODED['low']}", None))
 
+    def test_clean_up_after_move_is_tried_three_times(self):
+        for failures, cleaned in ((2, True), (3, False)):
+            with self.subTest(failures=failures):
+                remaining = [failures]
+
+                def fail(method, url, body):
+                    if method == "DELETE" and remaining[0]:
+                        remaining[0] -= 1
+                        return 403
+                    return None
+
+                fake = FakeGitHub(fail=fail)
+                if cleaned:
+                    self.assertFalse(self.labels(fake).publish("low", current(True, False)))
+                    self.assertEqual(fake.pr_labels, set())
+                else:
+                    with self.assertRaises(labels.LabelError) as caught:
+                        self.labels(fake).publish("low", current(True, False))
+                    self.assertTrue(caught.exception.cleanup_failed)
+                    self.assertEqual(fake.pr_labels, {"risk: low"})
+                self.assertEqual([method for method, _, _ in fake.calls].count("DELETE"), min(failures + 1, 3))
+
+    def test_clean_up_after_error_is_tried_three_times(self):
+        fake = FakeGitHub(fail=lambda method, url, body: 403 if method == "DELETE" else None)
+
+        def is_current():
+            if fake.pr_labels:
+                raise GitHubError("final re-read failed")
+            return True
+
+        with self.assertRaises(labels.LabelError) as caught:
+            self.labels(fake).publish("low", is_current)
+        self.assertTrue(caught.exception.cleanup_failed)
+        self.assertEqual([method for method, _, _ in fake.calls].count("DELETE"), 3)
+
     def test_failed_add_attempts_removal_and_raises(self):
         fake = FakeGitHub(fail=lambda method, url, body: 403 if (method, url) == ("POST", ISSUE_LABELS) else None)
         with self.assertRaises(labels.LabelError):

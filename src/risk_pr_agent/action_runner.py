@@ -65,15 +65,10 @@ def _fetch_git(repo: RepoRef, base: str, head: str, directory: Path) -> None:
         raise ActionError("git_fetch_failed") from None
 
 
-def _run_scorer(repo: RepoRef, number: int, directory: Path,
-                share_github_token: bool = True) -> Dict[str, Any]:
+def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
     output = directory / "scored.json"
     environment = _git_environment()
     environment["PYTHONPATH"] = str(SOURCE_ROOT / "src")
-    if not share_github_token:
-        # A token that may write labels stays out of the process that handles PR content.
-        environment.pop("GITHUB_TOKEN", None)
-        environment.pop("GH_TOKEN", None)
     # Publish only after checking that the model and GitHub still refer to the
     # revision we fetched. Neither the PR checkout nor its .env is ever loaded.
     environment.pop("GITHUB_OUTPUT", None)
@@ -97,7 +92,10 @@ def _publish(result: Dict[str, Any], result_path: str) -> None:
         output = Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd())) / output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    summary = risk_summary(result) + "\nJev candidate result; this check does not authorize merging.\n"
+    summary = risk_summary(result) + "\n"
+    if result.get("label_cleanup_failed"):
+        summary += "A risk label may still be on the PR; the next run will clear it.\n\n"
+    summary += "Jev candidate result; this check does not authorize merging.\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
             handle.write(summary)
@@ -132,8 +130,10 @@ def _publish_risk_label(risk_labels: RiskLabels, result: Dict[str, Any], client:
 
     try:
         published = risk_labels.publish(result["risk_label"], unchanged)
-    except LabelError:
+    except LabelError as error:
         published, status = False, "label_error"
+        if error.cleanup_failed:
+            result["label_cleanup_failed"] = True
     else:
         status = "ok" if published else "pr_changed"
     result["label_published"] = published
@@ -173,7 +173,7 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         with tempfile.TemporaryDirectory(prefix="jev-pr-") as temporary:
             directory = Path(temporary)
             _fetch_git(repo, base, head, directory / "target.git")
-            result = _run_scorer(repo, number, directory, share_github_token=not publish_label)
+            result = _run_scorer(repo, number, directory)
             snapshot = result.get("snapshot") or {}
             if (snapshot.get("source_base_sha"), snapshot.get("source_head_sha")) != (base, head):
                 raise ActionError("pr_changed")

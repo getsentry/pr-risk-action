@@ -48,7 +48,7 @@ jobs:
           retention-days: 30
 ```
 
-No target checkout or target dependency installation is needed. The Action loads its trusted Python source through `PYTHONPATH`, installs the trusted Python dependencies (`tiktoken==0.14.0`) and Node worker dependencies (AI SDK `7.0.106`), preloads the token estimator without the Gateway key, downloads Git objects into an isolated bare repository and reads the exact base/head revisions. PR files are never executed. Git downloads do not receive the Gateway key or GitHub token; with `publish-label: true` the scoring process does not receive the GitHub token either. This initial integration supports public GitHub repositories, including PRs from forks.
+No target checkout or target dependency installation is needed. The Action loads its trusted Python source through `PYTHONPATH`, installs the trusted Python dependencies (`tiktoken==0.14.0`) and Node worker dependencies (AI SDK `7.0.106`), preloads the token estimator without the Gateway key, downloads Git objects into an isolated bare repository and reads the exact base/head revisions. PR files are never executed. Git downloads do not receive the Gateway key or GitHub token. This initial integration supports public GitHub repositories, including PRs from forks.
 
 The Action verifies that the PR has not moved before publishing a classification. A moved PR is reported as unclassified. `expected-head-sha` binds automatic runs to their triggering revision; leave it empty for a manual run against the current PR.
 
@@ -75,7 +75,7 @@ permissions:
           publish-label: true
 ```
 
-Every run first removes all three risk labels, before scoring. It adds the final `risk-label` (never the model label) only when the result is `ok` and the PR is still open at the scored base and head, and checks again after adding. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. See [Label publishing](jev-risk-classification.md#label-publishing).
+Every run first removes all three risk labels, before scoring. It adds the final `risk-label` (never the model label) only when the result is `ok` and the PR is still open at the scored base and head, and checks again after adding. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. If removing a label the run just added fails three times, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR until the next run clears it. See [Label publishing](jev-risk-classification.md#label-publishing).
 
 **Replacing a label script in the caller workflow.** Delete the caller's own label step and set `publish-label: true`. The Action clears the old label at the start of every run, so a label on a PR always belongs to the revision that was scored. Anyone with triage rights can still add a risk label by hand, so automation that acts on `low` must read the check's result for the exact head commit rather than trust the label.
 

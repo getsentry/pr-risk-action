@@ -24,13 +24,21 @@ from .github import GITHUB_API, RepoRef
 RISK_LABELS = {"low": ("risk: low", "0E8A16"), "medium": ("risk: medium", "FBCA04"),
                "high": ("risk: high", "B60205")}
 _ATTEMPTS = 3
+_CLEANUP_ATTEMPTS = 3
 
 # (method, url, json body or None) -> HTTP status. Network failures report a 5xx status.
 Transport = Callable[[str, str, Optional[Dict[str, Any]]], int]
 
 
 class LabelError(RuntimeError):
-    """A label request failed; the message never contains response bodies."""
+    """A label request failed; the message never contains response bodies.
+
+    ``cleanup_failed`` is True when a label this run added may still be on the PR.
+    """
+
+    def __init__(self, message: str, cleanup_failed: bool = False) -> None:
+        super().__init__(message)
+        self.cleanup_failed = cleanup_failed
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -87,7 +95,8 @@ class RiskLabels:
 
         Returns True when the label is on the PR and the PR was unchanged after it
         was added, False when the PR changed (nothing left on the PR). Raises
-        LabelError on any failure, after trying to remove a label it may have added.
+        LabelError on any failure, after trying to remove a label it may have added;
+        if that removal fails too, the error has ``cleanup_failed`` set.
         """
         if level not in RISK_LABELS:
             raise LabelError("unknown risk level")
@@ -100,15 +109,22 @@ class RiskLabels:
             self._send("POST", self._issue_labels, {"labels": [RISK_LABELS[level][0]]}, (200,))
             if is_current():
                 return True
-            self._remove(level)
-            return False
         except Exception:
-            if may_be_added:
-                try:
-                    self._remove(level)
-                except LabelError:
-                    pass
+            if may_be_added and not self._clean_up(level):
+                raise LabelError("label publishing failed", cleanup_failed=True) from None
             raise LabelError("label publishing failed") from None
+        if not self._clean_up(level):
+            raise LabelError("pull request changed and label removal failed", cleanup_failed=True)
+        return False
+
+    def _clean_up(self, level: str) -> bool:
+        for _ in range(_CLEANUP_ATTEMPTS):
+            try:
+                self._remove(level)
+                return True
+            except LabelError:
+                pass
+        return False
 
     def _ensure_exists(self, level: str) -> None:
         name, colour = RISK_LABELS[level]
