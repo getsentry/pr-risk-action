@@ -659,6 +659,10 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                     row.update({key: response.get(key) for key in ("status", "risk_label", "probabilities", "provider_confidence", "model_response", "probability_decimals", "error")})
                     if row["status"] != "ok":
                         row.update(risk_label=None, probabilities=None)
+                    if "sdk" in built:
+                        from .sdk_rules import apply_rules
+                        row["mechanisms"] = response.get("mechanisms")
+                        apply_rules(row)
             row["attempts"] = attempts
             row["cache_hit"] = cache_hit
             row["usage"] = {key: _sum_known(attempts, key, usage=True)[0] for key in ("input_tokens", "output_tokens")}
