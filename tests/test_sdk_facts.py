@@ -108,9 +108,6 @@ class ShippedSheetsTest(unittest.TestCase):
             self.assertEqual(tag_path(sheet, "pkg/package.json")["kinds"], ["dependencies"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RealSheetSpotCheckTest(unittest.TestCase):
     """Spot checks against the shipped sheets, at the commits recorded in each sheet."""
@@ -167,6 +164,9 @@ class RealSheetSpotCheckTest(unittest.TestCase):
         self.assert_families("sentry-javascript", "packages/node/src/index.ts", ["server"])
         self.assert_families("sentry-javascript", "packages/vite-plugin/src/index.ts", ["tooling"])
         self.assert_has_kind("sentry-javascript", "packages/browser/package.json", "dependencies")
+        license_kinds = self.tags("sentry-javascript", "packages/browser/LICENSE")["kinds"]
+        self.assertIn("build-release", license_kinds)
+        self.assertNotIn("docs", license_kinds)
         self.assert_has_kind("sentry-javascript", "dev-packages/rollup-utils/npmHelpers.mjs", "build-release")
         self.assert_tests_only("sentry-javascript", "packages/core/test/lib/x.test.ts")
 
@@ -180,6 +180,7 @@ class RealSheetSpotCheckTest(unittest.TestCase):
         self.assertIn("hybrid", self.tags("sentry-dotnet", "src/Sentry.Maui/SentryMauiAppBuilderExtensions.cs")["families"])
         self.assertEqual(self.tags("sentry-dotnet", "src/Sentry/SentrySdk.cs")["shared_core"], True)
         self.assert_families("sentry-dotnet", "src/Sentry.AspNetCore/SentryMiddleware.cs", ["server"])
+        self.assert_has_kind("sentry-dotnet", "src/.editorconfig", "build-release")
         self.assert_has_kind("sentry-dotnet", "test/Sentry.Tests/ApiApprovalTests.Run.DotNet8_0.verified.txt",
                              "public-api-record")
 
@@ -199,3 +200,7 @@ class RealSheetSpotCheckTest(unittest.TestCase):
         self.assert_has_kind("sentry-react-native", "packages/core/android/build.gradle", "dependencies")
         self.assert_has_kind("sentry-react-native", "packages/core/etc/sentry-react-native.api.md", "public-api-record")
         self.assert_tests_only("sentry-react-native", "packages/core/test/x.test.ts")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,9 +1,9 @@
 [[kind]]
-paths = [".github/**", ".craft.yml", "**/Makefile", "**/Dockerfile"]
+paths = [".github/**", ".craft.yml", "**/Makefile", "**/Dockerfile", "**/LICENSE", "**/LICENSE.*", "**/.editorconfig", "**/.gitignore"]
 kind = "build-release"
 
 [[kind]]
-paths = ["**/*.md", "**/*.mdx", "**/LICENSE", "**/LICENSE.*"]
+paths = ["**/*.md", "**/*.mdx"]
 kind = "docs"
 
 [[kind]]
@@ -11,5 +11,5 @@ paths = [".gitmodules", "**/package.json", "**/package-lock.json", "**/yarn.lock
 kind = "dependencies"
 
 [[kind]]
-paths = [".claude/**", ".cursor/**", ".agents/**", ".pi/**", ".vscode/**", ".idea/**", "**/.editorconfig", "**/.gitignore", "**/.gitattributes", ".pre-commit-config.yaml"]
+paths = [".claude/**", ".cursor/**", ".agents/**", ".pi/**", ".vscode/**", ".idea/**", "**/.gitattributes", ".pre-commit-config.yaml"]
 kind = "dev-tooling"
