@@ -416,23 +416,31 @@ PLANTED_SEGMENTS = ("test", "tests", "src/test", "__tests__", "spec", "samples",
                     "testing", "fixtures")
 
 # Variants that are real non-shipping locations in that repository, so tagging them non-shipping is right.
-REAL_NON_SHIPPING_VARIANTS = {
+# Real non-shipping roots inside a shipping area: a planted variant under one of these is a real
+# test or sample location in that repository, so tagging it non-shipping is right.
+REAL_NON_SHIPPING_ROOTS = {
     # <module>/src/test is each Gradle module's real test source set.
-    ("sentry-java", "sentry/src/test/main/java/io/sentry/Sentry.java"),
-    ("sentry-java", "sentry-android-core/src/test/main/java/io/sentry/android/core/X.java"),
-    ("sentry-java", "sentry-servlet/src/test/main/java/io/sentry/servlet/X.java"),
-    ("sentry-java", "sentry-test-support/src/test/main/kotlin/io/sentry/test/X.kt"),
+    "sentry-java": ["*/src/test/**"],
     # The Gradle plugin module's real test source set.
-    ("sentry-kotlin-multiplatform",
-     "sentry-kotlin-multiplatform-gradle-plugin/src/test/main/java/io/sentry/kotlin/multiplatform/gradle/SentryPlugin.kt"),
-    # ndk/lib/src/test is the NDK library's real unit-test source set.
-    ("sentry-native", "ndk/lib/src/test/src/main/jni/sentry.c"),
-    # packages/core/test is the package's real Jest test root (metro.js sits in packages/core).
-    ("sentry-react-native", "packages/core/test/metro.js"),
-    # <crate>/examples and <crate>/tests are Cargo's real example and integration-test roots.
-    ("sentry-rust", "sentry-contexts/examples/build.rs"),
-    ("sentry-rust", "sentry-contexts/tests/build.rs"),
+    "sentry-kotlin-multiplatform": ["sentry-kotlin-multiplatform-gradle-plugin/src/test/**"],
+    # ndk/lib/src/test is the NDK library's unit-test source set; ndk/sample is the sample app.
+    "sentry-native": ["ndk/lib/src/test/**", "ndk/sample/**"],
+    # packages/core/test is the package's Jest test root.
+    "sentry-react-native": ["packages/core/test/**"],
+    # packages/<name>/test is each package's Vitest/Jest test root.
+    "sentry-javascript": ["packages/*/test/**"],
+    "sentry-lynx": ["packages/*/test/**"],
+    # packages/<name>/test is each Dart package's test root; pub never compiles it into a dependant.
+    "sentry-dart": ["packages/*/test/**"],
+    # sentry-<gem>/spec is each gem's RSpec root, excluded from the gemspec's files.
+    "sentry-ruby": ["sentry-*/spec/**"],
+    # <crate>/examples and <crate>/tests are Cargo targets that are never part of the library crate.
+    "sentry-rust": ["*/examples/**", "*/tests/**"],
 }
+
+
+def _under_real_root(repo, path):
+    return any(matches(root, path) for root in REAL_NON_SHIPPING_ROOTS.get(repo, ()))
 
 
 def _area_root_depth(sheet, path):
@@ -447,14 +455,30 @@ def _area_root_depth(sheet, path):
 
 
 def planted_variants(sheet, path):
+    """``path`` with each planted segment inserted at every depth inside its shipping area."""
     parts = path.split("/")
-    inside = _area_root_depth(sheet, path) + 1  # just after the first segment inside the area
     variants = set()
-    for segment in PLANTED_SEGMENTS:
-        variants.add("/".join(parts[:-1] + [segment, parts[-1]]))
-        if inside < len(parts):
-            variants.add("/".join(parts[:inside] + [segment] + parts[inside:]))
+    for depth in range(_area_root_depth(sheet, path), len(parts)):
+        for segment in PLANTED_SEGMENTS:
+            variants.add("/".join(parts[:depth] + [segment] + parts[depth:]))
     return sorted(variants)
+
+
+# File names an author could plant next to shipped source to have it read as a test, story or mock.
+PLANTED_FILE_NAMES = ("evil_test.go", "evil.test.ts", "evil.spec.ts", "EvilTests.cs", "EvilTest.java",
+                      "evil_test.dart", "test_evil.py", "evil_spec.rb", "conftest.py", "evil.stories.tsx",
+                      "evil.mock.ts")
+
+# Planted file names that follow a compiler-enforced test convention in that repository.
+REAL_TEST_FILE_NAMES = {
+    # The Go toolchain never compiles _test.go files into a non-test build.
+    ("sentry-go", "evil_test.go"),
+}
+
+
+def planted_files(path):
+    directory = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+    return [directory + name for name in PLANTED_FILE_NAMES]
 
 
 class PlantedDirectoryTest(unittest.TestCase):
@@ -478,12 +502,24 @@ class PlantedDirectoryTest(unittest.TestCase):
             sheet = load_fact_sheet(f"getsentry/{repo}")
             for path in paths:
                 for variant in planted_variants(sheet, path):
-                    if (repo, variant) in REAL_NON_SHIPPING_VARIANTS:
+                    if _under_real_root(repo, variant):
                         continue
                     with self.subTest(repo=repo, variant=variant):
                         kinds = tag_path(sheet, variant)["kinds"]
                         self.assertFalse(kinds and all(kind in sdk_facts.NON_SHIPPING_KINDS for kind in kinds),
                                          f"{variant} is tagged only {kinds}")
+
+    def test_planted_file_names_keep_shipping_tags(self):
+        for repo, paths in sorted(SHIPPED_SOURCE_PATHS.items()):
+            sheet = load_fact_sheet(f"getsentry/{repo}")
+            for path in paths:
+                for planted in planted_files(path):
+                    if (repo, planted.rsplit("/", 1)[-1]) in REAL_TEST_FILE_NAMES:
+                        continue
+                    with self.subTest(repo=repo, planted=planted):
+                        kinds = tag_path(sheet, planted)["kinds"]
+                        self.assertFalse(kinds and all(kind in sdk_facts.NON_SHIPPING_KINDS for kind in kinds),
+                                         f"{planted} is tagged only {kinds}")
 
     def test_non_shipping_patterns_are_anchored(self):
         # Only file-name patterns may match at any depth: Go keeps tests beside sources (the

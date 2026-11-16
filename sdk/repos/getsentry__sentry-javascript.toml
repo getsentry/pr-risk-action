@@ -48,7 +48,7 @@ shared_core = true
 # inside packages/*/src is not read as a test.
 [[kind]]
 paths = [
-  "packages/*/test/**", "packages/*/tests/**", "packages/*/tsconfig.test.json",
+  "packages/*/test/**", "packages/ember/tests/**", "packages/*/tsconfig.test.json",
   "packages/*/vitest.config*", "dev-packages/*/tsconfig.test.json", "dev-packages/*/vitest.config*",
   "packages/*/setup-test.ts", "packages/*/patch-vitest.ts", "dev-packages/*-tests/**",
   "dev-packages/e2e-tests/**", "dev-packages/test-utils/**",
