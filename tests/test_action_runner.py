@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -396,12 +397,72 @@ class LabelPublishingTests(RunnerTestCase):
         transport.assert_not_called()
         self.assertIn("label_published=false\n", (self.directory / "output").read_text())
 
-    def test_enabled_early_exit_touches_no_label(self):
-        with patch.dict(os.environ, {"AI_GATEWAY_API_KEY": ""}), \
-                patch.object(labels, "default_transport") as transport:
-            code, result, _ = self.invoke(publish_label=True)
-        self.assertEqual((code, result["status"], result["label_published"]), (1, "missing_credentials", False))
-        transport.assert_not_called()
+    def test_enabled_exits_before_clearing_touch_no_label(self):
+        cases = [("example/..", "7", {}, "invalid_repository"),
+                 ("example/project", "07", {}, "invalid_pr_number"),
+                 ("example/project", "7", {"GITHUB_SERVER_URL": "https://ghe.example.invalid"},
+                  "unsupported_repository")]
+        for repo, number, environment, status in cases:
+            with self.subTest(status=status), patch.dict(os.environ, environment), \
+                    patch.object(labels, "default_transport") as transport:
+                code, result, _ = self.invoke(repo, number, publish_label=True)
+            self.assertEqual((code, result["status"], result["label_published"]), (1, status, False))
+            transport.assert_not_called()
+
+    def test_enabled_later_exits_have_already_cleared_old_labels(self):
+        cases = [("missing_credentials", patch.dict(os.environ, {"AI_GATEWAY_API_KEY": ""})),
+                 ("missing_sdk_data", patch.object(action_runner, "SOURCE_ROOT", self.directory / "incomplete")),
+                 ("invalid_revision", None)]
+        for status, condition in cases:
+            with self.subTest(status=status), condition or contextlib.nullcontext(), \
+                    patch.object(labels, "default_transport",
+                                 return_value=FakeGitHub(pr_labels={"risk: low", "bug"})) as transport, \
+                    patch.object(action_runner, "GitHubClient") as client:
+                code, result, _ = self.invoke(expected="not-a-sha" if status == "invalid_revision" else "",
+                                              publish_label=True)
+            self.assertEqual((code, result["status"], result["label_published"]), (1, status, False))
+            self.assertEqual(transport.return_value.pr_labels, {"bug"})
+            client.assert_not_called()
+
+    def test_disabled_ignores_label_fields_from_the_scorer(self):
+        scored = classification()
+        scored.update(label_published=True, label_cleanup_failed=True)
+        with patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
+                patch.object(action_runner, "_fetch_git"), \
+                patch.object(action_runner, "_run_scorer", return_value=scored):
+            code, _, _ = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertTrue((self.directory / "output").read_text().endswith("\nlabel_published=false\n"))
+        self.assertNotIn("may still be on the PR", (self.directory / "summary").read_text())
+
+    def test_tls_errors_from_the_transport_still_write_a_result(self):
+        moved = [pull_request(), pull_request(), pull_request(), pull_request(head="d" * 40)]
+        cases = [("clear", lambda method, url: method == "DELETE", None, False),
+                 ("add", lambda method, url: (method, url) == ("POST", ISSUE_LABELS), None, False),
+                 ("cleanup", lambda method, url: method == "DELETE" and ("added", "risk: low") in fake.events,
+                  moved, True)]
+        for name, raises, responses, cleanup_failed in cases:
+            with self.subTest(name=name):
+                fake = FakeGitHub(pr_labels={"risk: high"})
+
+                def fail(method, url, body):
+                    if raises(method, url):
+                        raise ssl.SSLError("tls failure")
+                    return None
+
+                fake.fail = fail
+                for path in ("summary", "output"):
+                    (self.directory / path).write_text("")
+                code, result, output, _, scorer = self.run_enabled(fake, responses=responses)
+                self.assertEqual((code, result["status"], result["label_published"]), (1, "label_error", False))
+                self.assertIn("status=label_error\n", output)
+                self.assertEqual(result.get("label_cleanup_failed", False), cleanup_failed)
+                if name == "clear":
+                    scorer.assert_not_called()
+                if cleanup_failed:
+                    # Clearing, then three clean-up attempts each retried like a server error.
+                    self.assertEqual([m for m, _, _ in fake.calls].count("DELETE"), 3 + 3 * 3)
+                    self.assertIn("may still be on the PR", (self.directory / "summary").read_text())
 
     def test_old_labels_are_cleared_before_scoring_then_final_label_added(self):
         fake = FakeGitHub(pr_labels={"risk: low", "risk: high", "bug"})

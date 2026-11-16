@@ -97,12 +97,12 @@ Changing the wording in `sdk/rubric.toml` needs a bump of its `version`, so SDK 
 
 With the Action input `publish-label: true`, the Action applies the labels `risk: low`, `risk: medium` and `risk: high` (colours `0E8A16`, `FBCA04`, `B60205`; description `PR risk score: <class>`). With any other value it makes no write call to GitHub. In order:
 
-1. After validating the repository and PR number and confirming credentials, and before scoring, remove all three risk labels from the PR. If that fails, the run ends `label_error` without scoring, because the old label may still be there.
+1. Right after validating the repository and PR number and checking that the server is github.com, remove all three risk labels from the PR. Only `invalid_repository`, `invalid_pr_number` and `unsupported_repository` end a run before this; every later status, including `missing_sdk_data`, `invalid_revision` and `missing_credentials`, comes after it. If clearing fails, the run ends `label_error` without scoring, because the old label may still be there.
 2. Score as usual.
 3. Only when the status is `ok`: re-read the PR; if it is closed or its base or head differs from the scored revision, add nothing and report `pr_changed`. Otherwise create the repository label if missing (a concurrent creation is fine), add the final `risk_label` (never `model_label`), and re-read the PR again; if it moved or closed, remove the label and report `pr_changed`.
 4. Any failure in step 3 removes the label if it may have been added and reports `label_error`.
 
-Removing a label this run may have added (after a move or a failure) is tried up to three times. If every try fails, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR; the next run clears it in step 1.
+Removing a label this run may have added (after a move or a failure) is tried up to three times. A cancelled run (SIGINT) that may have added the label tries one removal before stopping. If every try fails, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR; the next run clears it in step 1.
 
 `label_error` and `pr_changed` carry no label and no model verdict, like every non-`ok` status, and fail the job. Since step 1 runs first, a PR whose run did not finish step 3 carries no risk label, unless the clean-up described above failed. The result field `label_published` (present only with the input on) and the output `label-published` are `true` only when step 3 completed.
 

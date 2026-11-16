@@ -86,14 +86,15 @@ def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
     return json.loads(output.read_text(encoding="utf-8"))
 
 
-def _publish(result: Dict[str, Any], result_path: str) -> None:
+def _publish(result: Dict[str, Any], result_path: str, label_published: bool = False,
+             label_cleanup_failed: bool = False) -> None:
     output = Path(result_path)
     if not output.is_absolute():
         output = Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd())) / output
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary = risk_summary(result) + "\n"
-    if result.get("label_cleanup_failed"):
+    if label_cleanup_failed:
         summary += "A risk label may still be on the PR; the next run will clear it.\n\n"
     summary += "Jev candidate result; this check does not authorize merging.\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -106,15 +107,15 @@ def _publish(result: Dict[str, Any], result_path: str) -> None:
             while delimiter in summary:
                 delimiter = secrets.token_hex(16)
             handle.write(f"summary<<{delimiter}\n{summary.rstrip(chr(10))}\n{delimiter}\n")
-            handle.write(f"label_published={'true' if result.get('label_published') is True else 'false'}\n")
+            handle.write(f"label_published={'true' if label_published else 'false'}\n")
     print(summary)
 
 
 def _clear_risk_labels(repo: RepoRef, number: int) -> RiskLabels:
-    risk_labels = RiskLabels(repo, number)
     try:
+        risk_labels = RiskLabels(repo, number)
         risk_labels.clear()
-    except LabelError:
+    except Exception:
         # The old label may still be on the PR, so this run must not score it.
         raise ActionError("label_error") from None
     return risk_labels
@@ -134,6 +135,11 @@ def _publish_risk_label(risk_labels: RiskLabels, result: Dict[str, Any], client:
         published, status = False, "label_error"
         if error.cleanup_failed:
             result["label_cleanup_failed"] = True
+    except Exception:
+        # Last resort: publish() wraps its own failures, but the result must always
+        # be written, and nothing vouches that the label is gone.
+        published, status = False, "label_error"
+        result["label_cleanup_failed"] = True
     else:
         status = "ok" if published else "pr_changed"
     result["label_published"] = published
@@ -155,6 +161,12 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         if repo.name in (".", ".."):
             raise ActionError("invalid_repository")
         result.update(repo=repo.slug, number=number, example_id=f"{repo.slug}#{number}")
+        if publish_label:
+            # Writes go to api.github.com only, so check the server before clearing.
+            # Clear before every later exit so no run leaves an earlier revision's label.
+            if os.environ.get("GITHUB_SERVER_URL", "https://github.com") != "https://github.com":
+                raise ActionError("unsupported_repository")
+            risk_labels = _clear_risk_labels(repo, number)
         # SDK fact sheets and the rubric ship with the action. Without them every SDK
         # repository would silently fall back to default mode, so refuse to run.
         if not (SOURCE_ROOT / "sdk" / "defaults.toml").is_file():
@@ -164,8 +176,6 @@ def run_action(repo_value: str, number_value: str, result_path: str,
             raise ActionError("missing_credentials")
         if os.environ.get("GITHUB_SERVER_URL", "https://github.com") != "https://github.com":
             raise ActionError("unsupported_repository")
-        if publish_label:
-            risk_labels = _clear_risk_labels(repo, number)
         client = GitHubClient()
         base, head = _revision(client.get_pull_request(repo, number), number)
         if expected_head and head != expected_head:
@@ -195,13 +205,15 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         result.update(status="action_error", risk_label=None, probabilities=None)
     if publish_label:
         result["label_published"] = False
+        result.pop("label_cleanup_failed", None)
         if risk_labels and revision and result.get("status") == "ok" and result.get("risk_label") in RISK_LABELS:
             _publish_risk_label(risk_labels, result, client, repo, number, revision)
     if result.get("status") != "ok":
         # The action does not vouch for this result, so it publishes no model verdict.
         for key in _VERDICT_FIELDS:
             result.pop(key, None)
-    _publish(result, result_path)
+    _publish(result, result_path, label_published=publish_label and result["label_published"] is True,
+             label_cleanup_failed=publish_label and result.get("label_cleanup_failed") is True)
     return 0 if result.get("status") == "ok" else 1
 
 

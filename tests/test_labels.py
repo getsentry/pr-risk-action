@@ -1,5 +1,6 @@
 import io
 import os
+import ssl
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -51,6 +52,10 @@ class FakeGitHub:
             self.events.extend(("added", name) for name in body["labels"])
             return 200
         raise AssertionError(f"unexpected request {method} {url}")
+
+
+def _raise(error):
+    raise error
 
 
 def current(*answers):
@@ -156,6 +161,44 @@ class RiskLabelsTests(unittest.TestCase):
         self.assertTrue(caught.exception.cleanup_failed)
         self.assertEqual([method for method, _, _ in fake.calls].count("DELETE"), 3)
 
+    def test_transport_exceptions_become_label_errors(self):
+        def raising(method):
+            def fail(m, url, body):
+                if m == method:
+                    raise ssl.SSLError("tls failure")
+            return fail
+
+        fake = FakeGitHub(pr_labels={"risk: low"}, fail=raising("DELETE"))
+        with self.assertRaises(labels.LabelError):
+            self.labels(fake).clear()
+        fake = FakeGitHub(fail=raising("POST"))
+        with self.assertRaises(labels.LabelError) as caught:
+            self.labels(fake).publish("low", current(True, True))
+        self.assertFalse(caught.exception.cleanup_failed)
+        self.assertEqual(fake.calls[-1][0], "DELETE")
+        fake = FakeGitHub()
+        fake.fail = lambda m, url, body: (_raise(ssl.SSLError("tls")) if m == "DELETE" else None)
+        with self.assertRaises(labels.LabelError) as caught:
+            self.labels(fake).publish("low", current(True, False))
+        self.assertTrue(caught.exception.cleanup_failed)
+        # Three clean-up attempts, each retried like any server error.
+        self.assertEqual([m for m, _, _ in fake.calls].count("DELETE"), 3 * 3)
+        self.assertEqual(fake.pr_labels, {"risk: low"})
+
+    def test_cancellation_after_add_removes_the_label_and_propagates(self):
+        answers = [True]
+
+        def is_current():
+            if answers:
+                return answers.pop()
+            raise KeyboardInterrupt
+
+        fake = FakeGitHub()
+        with self.assertRaises(KeyboardInterrupt):
+            self.labels(fake).publish("low", is_current)
+        self.assertEqual(fake.pr_labels, set())
+        self.assertEqual(fake.events[-2:], [("added", "risk: low"), ("removed", "risk: low")])
+
     def test_failed_add_attempts_removal_and_raises(self):
         fake = FakeGitHub(fail=lambda method, url, body: 403 if (method, url) == ("POST", ISSUE_LABELS) else None)
         with self.assertRaises(labels.LabelError):
@@ -237,10 +280,12 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(labels.default_transport()("GET", REPO_LABELS + "/x", None), 403)
         self.assertEqual(stream.getvalue(), "")
 
-    def test_network_errors_become_a_server_error_status(self):
-        with patch.dict(os.environ, {"GITHUB_TOKEN": "github-test-key"}), \
-                patch.object(labels._OPENER, "open", side_effect=urllib.error.URLError("down")):
-            self.assertGreaterEqual(labels.default_transport()("GET", REPO_LABELS + "/x", None), 500)
+    def test_network_and_tls_errors_become_a_server_error_status(self):
+        for error in (urllib.error.URLError("down"), ssl.SSLError("tls"), OSError("reset"), TimeoutError()):
+            with self.subTest(error=type(error).__name__), \
+                    patch.dict(os.environ, {"GITHUB_TOKEN": "github-test-key"}), \
+                    patch.object(labels._OPENER, "open", side_effect=error):
+                self.assertGreaterEqual(labels.default_transport()("GET", REPO_LABELS + "/x", None), 500)
 
     def test_redirects_are_not_followed(self):
         handler = labels._NoRedirect()

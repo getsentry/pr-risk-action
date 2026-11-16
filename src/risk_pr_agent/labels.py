@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import http.client
 import time
 import urllib.error
@@ -67,8 +66,9 @@ def default_transport() -> Transport:
         except urllib.error.HTTPError as error:
             error.close()
             return error.code
-        except (urllib.error.URLError, socket.timeout, TimeoutError,
-                http.client.HTTPException, ConnectionError):
+        except (OSError, http.client.HTTPException):
+            # URLError, timeouts, connection and TLS errors (ssl.SSLError is raised
+            # outside urllib's own wrapper). Treated like a server error.
             return 599
 
     return send
@@ -107,22 +107,29 @@ class RiskLabels:
             self._ensure_exists(level)
             may_be_added = True
             self._send("POST", self._issue_labels, {"labels": [RISK_LABELS[level][0]]}, (200,))
-            if is_current():
-                return True
+            unchanged = is_current()
         except Exception:
             if may_be_added and not self._clean_up(level):
                 raise LabelError("label publishing failed", cleanup_failed=True) from None
             raise LabelError("label publishing failed") from None
+        except BaseException:
+            # Cancellation (SIGINT) or exit: one quick removal attempt, then stop.
+            if may_be_added:
+                self._clean_up(level, attempts=1)
+            raise
+        if unchanged:
+            return True
         if not self._clean_up(level):
             raise LabelError("pull request changed and label removal failed", cleanup_failed=True)
         return False
 
-    def _clean_up(self, level: str) -> bool:
-        for _ in range(_CLEANUP_ATTEMPTS):
+    def _clean_up(self, level: str, attempts: int = _CLEANUP_ATTEMPTS) -> bool:
+        """Try to remove the label ``attempts`` times; never raises an Exception."""
+        for _ in range(attempts):
             try:
                 self._remove(level)
                 return True
-            except LabelError:
+            except Exception:
                 pass
         return False
 
@@ -142,7 +149,10 @@ class RiskLabels:
         if self._transport is None:
             self._transport = default_transport()
         for attempt in range(_ATTEMPTS):
-            status = self._transport(method, url, body)
+            try:
+                status = self._transport(method, url, body)
+            except Exception:
+                status = 599  # never let a transport failure skip the caller's clean-up
             if status in accepted:
                 return status
             if status < 500 or attempt == _ATTEMPTS - 1:
