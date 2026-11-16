@@ -1,9 +1,12 @@
 # getsentry/sentry-kotlin-multiplatform ec8e1a92b0be9f52e800efdae4bd3415de7d73ce
 
 # Common Kotlin code every target builds on; it calls into sentry-java (Android/JVM) and
-# sentry-cocoa (Apple, via cinterop).
+# sentry-cocoa (Apple, via cinterop). buildSrc Config.kt pins both SDK versions for the library build.
 [[area]]
-paths = ["sentry-kotlin-multiplatform/src/commonMain/**", "sentry-kotlin-multiplatform/build.gradle.kts"]
+paths = [
+  "sentry-kotlin-multiplatform/src/commonMain/**", "sentry-kotlin-multiplatform/build.gradle.kts",
+  "buildSrc/src/main/java/Config.kt",
+]
 families = ["hybrid", "mobile-native", "server"]
 shared_core = true
 

@@ -37,6 +37,23 @@ families = ["tooling"]
 paths = ["src/*"]
 families = ["server", "mobile-native", "hybrid", "browser"]
 
+# Submodules compiled into the Sentry package (Ben.Demystifier source, sentry-native for Native AOT),
+# the build-wide Directory.Build.props, and .gitmodules.
+[[area]]
+paths = ["modules/Ben.Demystifier", "modules/sentry-native", "Directory.Build.props", ".gitmodules"]
+families = ["server", "mobile-native", "hybrid", "browser"]
+shared_core = true
+
+# perfview (TraceEvent) is compiled into Sentry.Profiling.
+[[area]]
+paths = ["modules/perfview"]
+families = ["server"]
+
+# sentry-cocoa is bundled by Sentry.Bindings.Cocoa.
+[[area]]
+paths = ["modules/sentry-cocoa"]
+families = ["mobile-native", "hybrid"]
+
 [[kind]]
 paths = ["test/**/ApiApprovalTests.*.verified.txt"]
 kind = "public-api-record"

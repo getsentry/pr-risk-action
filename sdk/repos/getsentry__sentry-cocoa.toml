@@ -1,7 +1,8 @@
 # getsentry/sentry-cocoa ebbc5f1d5119bd1badccf58b6c7b2320aa8cbe49
 
+# Root Package*.swift are the Swift Package Manager manifests customers resolve.
 [[area]]
-paths = ["Sources/**", "3rd-party-integrations/**", "distribution/**"]
+paths = ["Sources/**", "3rd-party-integrations/**", "distribution/**", "Package*.swift"]
 families = ["mobile-native"]
 
 [[kind]]

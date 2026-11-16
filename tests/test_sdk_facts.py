@@ -110,6 +110,13 @@ class ShippedSheetsTest(unittest.TestCase):
             self.assertEqual(tag_path(sheet, "pkg/package.json")["kinds"], ["dependencies"])
             self.assertEqual(tag_path(sheet, ".gitattributes")["kinds"], ["build-release"])
             self.assertEqual(tag_path(sheet, "pkg/.gitattributes")["kinds"], ["build-release"])
+            for path in ("mix.exs", "pkg/mix.lock", "gemfiles/rails-7.gemfile.lock", "pkg/gemfiles/rails-7.gemfile"):
+                self.assertEqual(tag_path(sheet, path)["kinds"], ["dependencies"], path)
+            self.assertEqual(tag_path(sheet, "pkg/README.MD")["kinds"], ["docs"])
+            self.assertEqual(tag_path(sheet, "docker/linux.dockerfile")["kinds"], ["build-release"])
+            # Roslyn analyzer release-tracking files are compiler inputs: the extra kind keeps them blocking.
+            self.assertEqual(tag_path(sheet, "src/X.Analyzers/AnalyzerReleases.Shipped.md")["kinds"],
+                             ["docs", "public-api-record"])
 
 
 
@@ -188,6 +195,7 @@ class RealSheetSpotCheckTest(unittest.TestCase):
         self.assert_has_kind("sentry-dotnet", "src/.editorconfig", "build-release")
         self.assert_has_kind("sentry-dotnet", "test/Sentry.Tests/ApiApprovalTests.Run.DotNet8_0.verified.txt",
                              "public-api-record")
+        self.assert_has_kind("sentry-dotnet", "src/Sentry.Analyzers/AnalyzerReleases.Shipped.md", "public-api-record")
 
     def test_sentry_cocoa(self):
         self.assert_families("sentry-cocoa", "Sources/Swift/Helper/SentrySDK.swift", ["mobile-native"])
@@ -234,7 +242,7 @@ SPOT_CHECKS = [
     ("sentry-elixir", "lib/sentry/client.ex", "server", True, ""),
     ("sentry-elixir", "lib/mix/tasks/sentry.install.ex", "tooling", False, ""),
     ("sentry-elixir", "lib/sentry/integrations/oban/cron.ex", "server", False, ""),
-    ("sentry-elixir", "mix.exs", "server", False, "dependencies"),
+    ("sentry-elixir", "mix.exs", "server", True, "dependencies"),
     ("sentry-elixir", "test/sentry_test.exs", "", False, "tests"),
     ("sentry-elixir", "config/config.exs", "", False, "build-release"),
 
@@ -256,13 +264,16 @@ SPOT_CHECKS = [
     ("sentry-laravel", "src/Sentry/Laravel/Console/PublishCommand.php", "server tooling", False, ""),
     ("sentry-laravel", "src/Sentry/Laravel/EventHandler.php", "server", False, ""),
     ("sentry-laravel", "test/Sentry/EventHandlerTest.php", "", False, "tests"),
-    ("sentry-laravel", "composer.json", "", False, "dependencies"),
+    ("sentry-laravel", "composer.json", "server", True, "dependencies"),
     ("sentry-laravel", "scripts/versionbump.php", "", False, "build-release"),
 
     ("sentry-symfony", "src/Resources/config/services.yaml", "server", False, ""),
     ("sentry-symfony", "src/DependencyInjection/Configuration.php", "server", False, ""),
     ("sentry-symfony", "tests/End2End/App/Kernel.php", "", False, "tests"),
-    ("sentry-symfony", "composer.json", "", False, "dependencies"),
+    ("sentry-symfony", "composer.json", "server", True, "dependencies"),
+    ("sentry-symfony", "psalm.xml", "", False, "build-release"),
+    ("sentry-symfony", "psalm-baseline.xml", "", False, "build-release"),
+    ("sentry-symfony", "AUTHORS", "", False, "build-release"),
 
     ("sentry-native", "external/crashpad", "mobile-native", False, "dependencies"),
     ("sentry-native", "include/sentry.h", "mobile-native", True, "public-api-record"),
@@ -289,7 +300,7 @@ SPOT_CHECKS = [
     ("sentry-electron", "src/main/integrations/sentry-minidump/index.ts", "hybrid mobile-native server", False, ""),
     ("sentry-electron", "src/renderer/sdk.ts", "browser hybrid", False, ""),
     ("sentry-electron", "src/common/ipc.ts", "browser hybrid server", True, ""),
-    ("sentry-electron", "package.json", "", False, "dependencies"),
+    ("sentry-electron", "package.json", "browser hybrid mobile-native server", True, "dependencies"),
     ("sentry-electron", "test/e2e/versions.json", "", False, "tests"),
     ("sentry-electron", "rollup.config.mjs", "", False, "build-release"),
 
@@ -299,30 +310,30 @@ SPOT_CHECKS = [
     ("sentry-lynx", "samples/react/src/App.tsx", "", False, "samples"),
     ("sentry-lynx", "packages/lynx-react/test/lib/sdk.test.ts", "", False, "tests"),
 
-    ("sentry-kotlin-multiplatform", "buildSrc/src/main/java/Config.kt", "", False, "build-release dependencies"),
+    ("sentry-kotlin-multiplatform", "buildSrc/src/main/java/Config.kt", "hybrid mobile-native server", True, "build-release dependencies"),
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/src/nativeInterop/cinterop/SentryInternal/SentryHub.h", "hybrid mobile-native", False, "dependencies"),
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/api/jvm/sentry-kotlin-multiplatform.api", "", False, "public-api-record"),
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform-gradle-plugin/src/main/java/io/sentry/kotlin/multiplatform/gradle/SentryPlugin.kt", "hybrid tooling", False, ""),
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/build.gradle.kts", "hybrid mobile-native server", True, "build-release"),
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/src/commonTest/kotlin/io/sentry/kotlin/multiplatform/SentryIntegrationTest.kt", "", False, "tests"),
 
-    ("sentry-unity", "modules/sentry-native", "", False, "dependencies"),
-    ("sentry-unity", "src/sentry-dotnet", "", False, "dependencies"),
+    ("sentry-unity", "modules/sentry-native", "hybrid mobile-native", False, "dependencies"),
+    ("sentry-unity", "src/sentry-dotnet", "browser hybrid mobile-native", True, "dependencies"),
     ("sentry-unity", "samples/unity-of-bugs/Assets/Scripts/BugFarmButtons.cs", "hybrid", False, ""),
     ("sentry-unity", "src/Sentry.Unity.Editor/Android/DebugSymbolUpload.cs", "hybrid tooling", False, ""),
     ("sentry-unity", "package-dev/Runtime/Sentry.Unity.Native.PlayStation.dll.meta", "hybrid", False, "build-release"),
     ("sentry-unity", "src/Sentry.Unity/SentryUnityOptions.cs", "browser hybrid mobile-native", True, ""),
     ("sentry-unity", "samples/unity-of-bugs/ProjectSettings/ProjectVersion.txt", "", False, "samples"),
 
-    ("sentry-unreal", "modules/sentry-native", "", False, "dependencies"),
-    ("sentry-unreal", "modules/sentry-cocoa.properties", "", False, "dependencies"),
+    ("sentry-unreal", "modules/sentry-native", "hybrid mobile-native", False, "dependencies"),
+    ("sentry-unreal", "modules/sentry-cocoa.properties", "hybrid mobile-native", False, "dependencies"),
     ("sentry-unreal", "plugin-dev/Source/Sentry/Private/Tests/SentryEvent.spec.cpp", "hybrid mobile-native", False, ""),
     ("sentry-unreal", "plugin-dev/Source/Sentry/Private/SentrySubsystem.cpp", "hybrid mobile-native", True, ""),
     ("sentry-unreal", "plugin-dev/Scripts/upload_debug_symbols.py", "hybrid tooling", False, ""),
     ("sentry-unreal", "plugin-dev/Source/Sentry/Sentry_Android_UPL.xml", "hybrid mobile-native tooling", False, "build-release dependencies"),
     ("sentry-unreal", "plugin-dev/Sentry.uplugin", "hybrid", False, "build-release"),
 
-    ("sentry-godot", "modules/godot-cpp", "", False, "dependencies"),
+    ("sentry-godot", "modules/godot-cpp", "browser hybrid mobile-native", True, "dependencies"),
     ("sentry-godot", "project/test/util/json_assert", "", False, "dependencies tests"),
     ("sentry-godot", "doc_classes/SentrySDK.xml", "hybrid", False, "public-api-record"),
     ("sentry-godot", "src/editor/csproj_patcher.cpp", "hybrid mobile-native tooling", False, ""),
@@ -330,6 +341,53 @@ SPOT_CHECKS = [
     ("sentry-godot", "project/addons/sentry/user_feedback/user_feedback_form.gd", "hybrid", False, ""),
     ("sentry-godot", "project/main.gd", "", False, "samples"),
 ]
+
+
+# Manifests, lockfiles, version pins and submodule pointers that feed a shipped artifact. A
+# dependency-only PR touching just these must still get a family example block.
+DEPENDENCY_PATHS = {
+    "sentry-capacitor": ["package.json", "yarn.lock"],
+    "sentry-cocoa": ["Package.swift"],
+    "sentry-dart": ["packages/dart/pubspec.yaml", "packages/flutter/pubspec.yaml"],
+    "sentry-dotnet": ["Directory.Build.props", ".gitmodules", "modules/sentry-cocoa", "modules/sentry-native",
+                      "modules/Ben.Demystifier", "modules/perfview"],
+    "sentry-electron": ["package.json", "yarn.lock"],
+    "sentry-elixir": ["mix.exs", "mix.lock", "mix-1.18.lock"],
+    "sentry-go": ["go.mod", "go.sum"],
+    "sentry-godot": [".gitmodules", "modules/sentry-native", "modules/godot-cpp", "modules/sentry-cocoa.properties",
+                     "gradle/libs.versions.toml"],
+    "sentry-java": ["gradle/libs.versions.toml"],
+    "sentry-javascript": ["pnpm-lock.yaml"],
+    "sentry-kotlin-multiplatform": ["buildSrc/src/main/java/Config.kt"],
+    "sentry-laravel": ["composer.json"],
+    "sentry-lynx": ["yarn.lock", "packages/lynx-react/package.json"],
+    "sentry-native": [".gitmodules", "external/crashpad"],
+    "sentry-php": ["composer.json"],
+    "sentry-powershell": ["dependencies/Sentry.properties", "dependencies/download.ps1"],
+    "sentry-python": ["setup.py", "pyproject.toml", "uv.lock"],
+    "sentry-react-native": ["packages/core/package.json", "yarn.lock"],
+    "sentry-ruby": ["sentry-ruby/sentry-ruby.gemspec"],
+    "sentry-rust": ["Cargo.toml", "Cargo.lock"],
+    "sentry-symfony": ["composer.json"],
+    "sentry-unity": [".gitmodules", "src/sentry-dotnet", "modules/sentry-native", "modules/sentry-cli.properties",
+                     "global.json"],
+    "sentry-unreal": [".gitmodules", "modules/sentry-native", "modules/sentry-cocoa.properties"],
+}
+
+
+class DependencyManifestAreaTest(unittest.TestCase):
+    def test_every_shipped_sheet_has_dependency_paths(self):
+        shipped = sorted(p.stem.split("__", 1)[1] for p in (sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml"))
+        self.assertEqual(sorted(DEPENDENCY_PATHS), shipped)
+
+    def test_dependency_paths_get_families(self):
+        for repo, paths in DEPENDENCY_PATHS.items():
+            sheet = load_fact_sheet(f"getsentry/{repo}")
+            for path in paths:
+                with self.subTest(repo=repo, path=path):
+                    tags = tag_path(sheet, path)
+                    self.assertIn("dependencies", tags["kinds"])
+                    self.assertTrue(tags["families"])
 
 
 class RolloutSheetSpotCheckTest(unittest.TestCase):

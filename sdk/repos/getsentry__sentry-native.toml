@@ -1,9 +1,10 @@
 # getsentry/sentry-native 5eba64ff776253b93e36056e8ed5dec271af2388
 
+# .gitmodules names the vendored crashpad, breakpad, libunwindstack and lss sources under external/.
 [[area]]
 paths = [
   "src/**", "include/**", "external/**", "vendor/**", "cmake/**", "toolchains/**", "CMakeLists.txt",
-  "sentry-config.cmake.in", "sentry.rc.in",
+  "sentry-config.cmake.in", "sentry.rc.in", ".gitmodules",
 ]
 families = ["mobile-native"]
 

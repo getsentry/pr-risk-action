@@ -12,6 +12,12 @@ paths = [
 ]
 families = ["tooling", "hybrid"]
 
+# Workspace lockfile: the dependency versions the published packages are built from.
+[[area]]
+paths = ["yarn.lock"]
+families = ["hybrid", "tooling"]
+shared_core = true
+
 [[kind]]
 paths = ["packages/core/etc/**"]
 kind = "public-api-record"

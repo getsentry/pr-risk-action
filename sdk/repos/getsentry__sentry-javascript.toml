@@ -38,6 +38,12 @@ paths = [
 ]
 families = ["tooling"]
 
+# Workspace lockfile: the dependency versions every package and CDN bundle is built from.
+[[area]]
+paths = ["pnpm-lock.yaml"]
+families = ["browser", "server", "tooling"]
+shared_core = true
+
 [[kind]]
 paths = [
   "**/test/**", "packages/*/tests/**", "**/tsconfig.test.json", "**/vitest.config*",

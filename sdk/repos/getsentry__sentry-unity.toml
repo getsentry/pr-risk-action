@@ -35,6 +35,23 @@ paths = [
 ]
 families = ["hybrid"]
 
+# Pins every assembly is built from: the sentry-dotnet submodule (much of the public API comes from it),
+# the .NET SDK in global.json, the build-wide Directory.Build.props, and .gitmodules.
+[[area]]
+paths = ["src/sentry-dotnet", "src/sentry-dotnet/**", ".gitmodules", "global.json", "Directory.Build.props", "src/Directory.Build.props"]
+families = ["hybrid", "mobile-native", "browser"]
+shared_core = true
+
+# Bundled native SDK submodules and the build files that compile them into the package.
+[[area]]
+paths = ["modules/sentry-cocoa", "modules/sentry-java", "modules/sentry-native", "modules/Directory.Build.*"]
+families = ["hybrid", "mobile-native"]
+
+# sentry-cli version the editor integration downloads for symbol upload.
+[[area]]
+paths = ["modules/sentry-cli.properties"]
+families = ["tooling", "hybrid"]
+
 # Bundled SDKs: sentry-dotnet, sentry-java, sentry-native, sentry-cocoa and app-runner are submodules
 # (the gitlink entries match these patterns); sentry-cli is downloaded at the version in modules/sentry-cli.properties.
 [[kind]]

@@ -1,7 +1,8 @@
 # getsentry/sentry-java f56ca2a589ade86046136e68686ed0412c3bc3f3
 
+# The version catalog pins the dependencies every module is built with.
 [[area]]
-paths = ["sentry/**"]
+paths = ["sentry/**", "gradle/libs.versions.toml"]
 families = ["server", "mobile-native"]
 shared_core = true
 

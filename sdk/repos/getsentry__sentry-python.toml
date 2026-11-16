@@ -4,8 +4,12 @@
 paths = ["sentry_sdk/**", "scripts/init_serverless_sdk.py"]
 families = ["server"]
 
+# setup.py and pyproject.toml declare the Python versions and dependencies every customer inherits.
 [[area]]
-paths = ["sentry_sdk/*", "sentry_sdk/ai/**", "sentry_sdk/crons/**", "sentry_sdk/profiler/**"]
+paths = [
+  "sentry_sdk/*", "sentry_sdk/ai/**", "sentry_sdk/crons/**", "sentry_sdk/profiler/**",
+  "setup.py", "pyproject.toml", "uv.lock",
+]
 families = ["server"]
 shared_core = true
 

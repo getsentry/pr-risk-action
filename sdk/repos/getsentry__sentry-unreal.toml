@@ -29,6 +29,15 @@ families = ["tooling", "hybrid"]
 paths = ["plugin-dev/**"]
 families = ["hybrid"]
 
+# Bundled native SDKs: sentry-java and sentry-native submodules, and the sentry-cocoa and desktop crash
+# reporter versions downloaded into the plugin.
+[[area]]
+paths = [
+  ".gitmodules", "modules/sentry-java", "modules/sentry-native", "modules/sentry-cocoa.properties",
+  "modules/sentry-crash-reporter.properties",
+]
+families = ["hybrid", "mobile-native"]
+
 # Bundled SDKs: sentry-java and sentry-native are submodules (gitlinks under modules/); sentry-cocoa and the desktop
 # crash reporter are downloaded at the versions in modules/*.properties; sentry-cli at plugin-dev/sentry-cli.properties.
 # The Android UPL file pins the Sentry Android Gradle plugin, AGP and Kotlin used in customer builds.

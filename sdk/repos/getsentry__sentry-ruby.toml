@@ -9,8 +9,9 @@ families = ["server"]
 
 # sentry-ruby (and the sentry-ruby-core wrapper gem) is required by every other gem.
 # Its built-in integrations (net/http, rack, redis, puma, excon, faraday, ...) live in the same lib tree.
+# Its gemspecs declare the runtime dependencies every other gem inherits.
 [[area]]
-paths = ["sentry-ruby/lib/**"]
+paths = ["sentry-ruby/lib/**", "sentry-ruby/*.gemspec"]
 families = ["server"]
 shared_core = true
 

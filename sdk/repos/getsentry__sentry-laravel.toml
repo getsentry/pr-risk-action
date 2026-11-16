@@ -8,6 +8,12 @@ families = ["server"]
 paths = ["src/Sentry/Laravel/Console/**"]
 families = ["server", "tooling"]
 
+# composer.json declares the sentry/sentry range and PHP and Laravel versions every customer inherits.
+[[area]]
+paths = ["composer.json"]
+families = ["server"]
+shared_core = true
+
 [[kind]]
 paths = ["test/**", "phpunit.xml"]
 kind = "tests"

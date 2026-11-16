@@ -14,6 +14,12 @@ paths = [
 families = ["server"]
 shared_core = true
 
+# composer.json declares the PHP version and runtime dependencies every customer inherits.
+[[area]]
+paths = ["composer.json"]
+families = ["server"]
+shared_core = true
+
 [[kind]]
 paths = ["tests/**", "phpunit.xml.dist"]
 kind = "tests"

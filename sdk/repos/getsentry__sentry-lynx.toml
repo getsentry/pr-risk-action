@@ -14,6 +14,12 @@ families = ["browser", "hybrid"]
 paths = ["packages/lynx-plugin/**", "packages/lynx-react/plugin/**"]
 families = ["tooling"]
 
+# Workspace lockfile: the dependency versions both published packages are built from.
+[[area]]
+paths = ["yarn.lock"]
+families = ["browser", "hybrid", "tooling"]
+shared_core = true
+
 # Bundled SDK pins (@sentry/browser, @sentry/core, @sentry/webpack-plugin) are in
 # packages/*/package.json, which defaults.toml tags dependencies.
 [[kind]]

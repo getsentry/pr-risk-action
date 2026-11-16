@@ -26,7 +26,7 @@ If a fact sheet or `sdk/rubric.toml` cannot be loaded or fails validation, the r
 
 SDK mode applies to the default `metadata-diff` input profile, which is what the Action uses. Other experimental input profiles and legacy variants ignore fact sheets.
 
-The first fact sheets cover sentry-java, sentry-javascript, sentry-python, sentry-dotnet, sentry-cocoa and sentry-react-native.
+Fact sheets cover 23 repositories: sentry-capacitor, sentry-cocoa, sentry-dart, sentry-dotnet, sentry-electron, sentry-elixir, sentry-go, sentry-godot, sentry-java, sentry-javascript, sentry-kotlin-multiplatform, sentry-laravel, sentry-lynx, sentry-native, sentry-php, sentry-powershell, sentry-python, sentry-react-native, sentry-ruby, sentry-rust, sentry-symfony, sentry-unity and sentry-unreal.
 
 ### What the levels mean
 
@@ -87,9 +87,13 @@ Mechanism answers are shown in the summary and recorded, but they do not change 
 
 1. Write `sdk/repos/<owner>__<repo>.toml` (lower case) with `[[area]]` and `[[kind]]` tables, reading the repository's layout. Use patterns rather than lists so new modules need no edit.
 2. In a clone of the repository, run `git ls-files | risk-pr sdk-coverage --repo OWNER/NAME` until it exits 0. It prints counts per family and kind and lists unmapped paths; exit status 1 means some are unmapped, 2 means no fact sheet was found. Exit status 1 also covers a fact sheet or `sdk/defaults.toml` that fails to load or validate; the reason is printed on stderr.
-3. Add spot-check tests in `tests/test_sdk_facts.py` for the paths that matter most (shared core, public API records, samples, build files).
+3. Run it again with the index modes: `git ls-files -s | risk-pr sdk-coverage --repo OWNER/NAME --stage`. This also lists `submodules_without_dependencies`, the submodule pointers (mode `160000`) not tagged `dependencies`, and exits 1 while that list is not empty. A submodule inside a tree tagged `tests` or `samples` is easy to miss otherwise.
+4. Give every manifest, lockfile, version pin and submodule pointer that feeds a shipped artifact an `[[area]]` with the families of the package it feeds (`shared_core = true` when it feeds the whole repository). The `dependencies` kind blocks low on its own, but a PR that only touches area-less files gets no family example block. Manifests that only serve tests, samples or the repository's own tooling need no area.
+5. Add spot-check tests in `tests/test_sdk_facts.py` for the paths that matter most (shared core, public API records, samples, build files, bundled-SDK pins), and the representative manifests to `DEPENDENCY_PATHS`.
 
-Never give a non-shipping kind (`tests`, `samples`, `docs`, `dev-tooling`) to something that ships, such as a published test-support module or docs that carry runnable configuration. Such a file would stop counting towards its families and could be labelled low. A stale sheet fails safe: new paths are unmapped, which blocks low through R3, but someone must keep sheets current.
+Bundled-SDK version pins often sit in files no default pattern catches: a Dart constant, a Kotlin `buildSrc` file, a `.properties` file, vendored headers. The most reliable way to find them is to read the repository's `scripts/update-*.sh` scripts, which the dependency-update workflow calls; each names the file it rewrites.
+
+Never give a non-shipping kind (`tests`, `samples`, `docs`, `dev-tooling`) to something that ships, such as a published test-support module or docs that carry runnable configuration. Such a file would stop counting towards its families and could be labelled low. Folders named tests or samples sometimes ship, so check the packaging before tagging them: in sentry-unreal, `plugin-dev/Source/*/Private/Tests/**` is copied into the release zip and compiled inside the customer's game build, and in sentry-unity, `scripts/pack.ps1` copies `samples/unity-of-bugs/Assets/Scenes` and `Scripts` into the released package as an importable sample. A stale sheet fails safe: new paths are unmapped, which blocks low through R3, but someone must keep sheets current.
 
 Changing the wording in `sdk/rubric.toml` needs a bump of its `version`, so SDK requests never share a cache entry with an older rubric. Changes under `sdk/` and the `sdk_*.py` modules change what every SDK repository's label means and deserve owner review.
 

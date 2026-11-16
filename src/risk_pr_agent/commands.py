@@ -191,6 +191,8 @@ def build_parser() -> argparse.ArgumentParser:
     held.set_defaults(func=cmd_holdout)
     coverage = sub.add_parser("sdk-coverage", help="Tag paths read from stdin with a repo's SDK fact sheet")
     coverage.add_argument("--repo", required=True)
+    coverage.add_argument("--stage", action="store_true",
+                          help="Read `git ls-files -s` lines and also flag submodules not tagged dependencies")
     coverage.set_defaults(func=cmd_sdk_coverage)
     return parser
 
@@ -463,7 +465,20 @@ def cmd_sdk_coverage(args) -> int:
     if sheet is None:
         print(f"risk-pr: no SDK fact sheet for {args.repo}", file=sys.stderr)
         return 2
-    paths = [line.strip() for line in sys.stdin if line.strip()]
+    lines = [line.strip() for line in sys.stdin if line.strip()]
+    submodules = None
+    if args.stage:
+        paths, submodules = [], []
+        for line in lines:
+            meta, tab, path = line.partition("\t")
+            fields = meta.split()
+            if not tab or len(fields) != 3:
+                raise ValueError(f"--stage expects `git ls-files -s` lines, got {line!r}")
+            paths.append(path)
+            if fields[0] == "160000":
+                submodules.append(path)
+    else:
+        paths = lines
     by_family: Dict[str, int] = {}
     by_kind: Dict[str, int] = {}
     shared_core = 0
@@ -479,8 +494,11 @@ def cmd_sdk_coverage(args) -> int:
             unmapped.append(path)
     report = {"total": len(paths), "by_family": dict(sorted(by_family.items())),
               "by_kind": dict(sorted(by_kind.items())), "shared_core": shared_core, "unmapped": unmapped}
+    if submodules is not None:
+        report["submodules_without_dependencies"] = [
+            path for path in submodules if "dependencies" not in tag_path(sheet, path)["kinds"]]
     print(json.dumps(report, indent=2))
-    return 1 if unmapped else 0
+    return 1 if unmapped or report.get("submodules_without_dependencies") else 0
 
 
 def main(argv=None) -> int:

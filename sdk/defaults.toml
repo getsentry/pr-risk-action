@@ -1,13 +1,19 @@
 [[kind]]
-paths = [".github/**", ".craft.yml", "**/Makefile", "**/Dockerfile", "**/LICENSE", "**/LICENSE.*", "**/.editorconfig", "**/.gitignore", "**/.gitattributes"]
+paths = [".github/**", ".craft.yml", "**/Makefile", "**/Dockerfile", "**/*.dockerfile", "**/LICENSE", "**/LICENSE.*", "**/.editorconfig", "**/.gitignore", "**/.gitattributes"]
 kind = "build-release"
 
 [[kind]]
-paths = ["**/*.md", "**/*.mdx"]
+paths = ["**/*.md", "**/*.MD", "**/*.mdx"]
 kind = "docs"
 
+# Roslyn analyzer release-tracking files are compiler inputs that record shipped diagnostic IDs.
+# They also match **/*.md above; this blocking kind keeps them from counting as docs only.
 [[kind]]
-paths = [".gitmodules", "**/package.json", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/pyproject.toml", "**/setup.py", "**/setup.cfg", "**/requirements*.txt", "**/uv.lock", "**/poetry.lock", "**/go.mod", "**/go.sum", "**/Cargo.toml", "**/Cargo.lock", "**/Gemfile", "**/Gemfile.lock", "**/*.gemspec", "**/composer.json", "**/composer.lock", "**/*.csproj", "**/Directory.Packages.props", "**/Directory.Build.props", "**/libs.versions.toml", "**/Package.swift", "**/Package.resolved", "**/*.podspec", "**/pubspec.yaml", "**/pubspec.lock"]
+paths = ["**/AnalyzerReleases.*.md"]
+kind = "public-api-record"
+
+[[kind]]
+paths = [".gitmodules", "**/package.json", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/pyproject.toml", "**/setup.py", "**/setup.cfg", "**/requirements*.txt", "**/uv.lock", "**/poetry.lock", "**/go.mod", "**/go.sum", "**/Cargo.toml", "**/Cargo.lock", "**/Gemfile", "**/Gemfile.lock", "**/*.gemfile.lock", "**/gemfiles/**", "**/*.gemspec", "**/mix.exs", "**/mix.lock", "**/composer.json", "**/composer.lock", "**/*.csproj", "**/Directory.Packages.props", "**/Directory.Build.props", "**/libs.versions.toml", "**/Package.swift", "**/Package.resolved", "**/*.podspec", "**/pubspec.yaml", "**/pubspec.lock"]
 kind = "dependencies"
 
 [[kind]]

@@ -6,10 +6,10 @@ paths = ["*.go", "*/**"]
 families = ["server"]
 
 # Root module github.com/getsentry/sentry-go: every integration module requires it.
-# go.mod carries the minimum Go version and the dependencies every customer inherits.
+# go.mod carries the minimum Go version and the dependencies every customer inherits; go.sum pins them.
 # http/ and httpclient/ live in the root module but are integrations, so they are not shared core.
 [[area]]
-paths = ["*.go", "go.mod", "attribute/**", "protocol/**", "report/**", "internal/**"]
+paths = ["*.go", "go.mod", "go.sum", "attribute/**", "protocol/**", "report/**", "internal/**"]
 families = ["server"]
 shared_core = true
 

@@ -7,10 +7,11 @@ families = ["server"]
 
 # Crates every user compiles: the umbrella crate, core, protocol types, and the default-feature
 # integrations (backtrace, contexts, panic, debug-images).
-# Root Cargo.toml holds workspace.dependencies and rust-version inherited by every published crate.
+# Root Cargo.toml holds workspace.dependencies and rust-version inherited by every published crate;
+# Cargo.lock is the dependency set they are all built and tested with.
 [[area]]
 paths = [
-  "Cargo.toml", "sentry/**", "sentry-core/**", "sentry-types/**", "sentry-backtrace/**", "sentry-contexts/**",
+  "Cargo.toml", "Cargo.lock", "sentry/**", "sentry-core/**", "sentry-types/**", "sentry-backtrace/**", "sentry-contexts/**",
   "sentry-panic/**", "sentry-debug-images/**",
 ]
 families = ["server"]

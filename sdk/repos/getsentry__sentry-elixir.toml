@@ -2,8 +2,14 @@
 
 # The Hex package ships lib/, mix.exs and a few top-level docs (see package/0 in mix.exs).
 [[area]]
-paths = ["lib/sentry.ex", "lib/sentry/**", "mix.exs"]
+paths = ["lib/sentry.ex", "lib/sentry/**"]
 families = ["server"]
+
+# mix.exs declares the dependencies every customer inherits; the lockfiles pin what CI builds with.
+[[area]]
+paths = ["mix.exs", "mix.lock", "mix-*.lock"]
+families = ["server"]
+shared_core = true
 
 [[area]]
 paths = [
