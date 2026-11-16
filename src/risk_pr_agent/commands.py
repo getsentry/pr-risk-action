@@ -354,9 +354,10 @@ def _sdk_summary_lines(result: Dict[str, Any]) -> List[str]:
                 line += f" and {len(files) - _SHOWN_PATHS} more"
         bullets.append(line)
     if bullets:
-        lines += [""] + bullets + [""]
+        lines += ["", "Rules that block low:"] + bullets + [""]
     mechanisms = result.get("mechanisms")
-    if mechanisms:
+    if isinstance(mechanisms, dict) and mechanisms and all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) for value in mechanisms.values()):
         ranked = sorted(mechanisms.items(), key=lambda pair: -pair[1])
         lines.append("Mechanisms: " + ", ".join(
             f"{_MECHANISM_NAMES.get(key, key)}={value:.2f}" for key, value in ranked))

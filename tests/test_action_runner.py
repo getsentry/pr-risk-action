@@ -32,6 +32,13 @@ def classification(base=BASE, head=HEAD):
             "snapshot": {"source_base_sha": base, "source_head_sha": head}}
 
 
+def sdk_result_fields():
+    return {"model_label": "low", "low_blocked_by": [{"rule": "R4", "files": ["core/api/core.api"]}],
+            "mechanisms": {"m_contract": .9, "m_ships": .1},
+            "sdk": {"rubric_version": "1", "facts_hash": "h", "families_touched": ["server"],
+                    "shared_core": False, "files": []}}
+
+
 class ActionRunnerTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -122,9 +129,11 @@ class ActionRunnerTests(unittest.TestCase):
         fetch.assert_not_called()
 
     def test_movement_during_scoring_discards_label_and_probabilities(self):
-        for source_changed in (True, False):
-            with self.subTest(source_changed=source_changed):
+        for source_changed, sdk_shaped in ((True, False), (False, False), (True, True), (False, True)):
+            with self.subTest(source_changed=source_changed, sdk_shaped=sdk_shaped):
                 scored = classification(head="c" * 40) if source_changed else classification()
+                if sdk_shaped:
+                    scored.update(sdk_result_fields())
                 responses = [pull_request(), pull_request(head="d" * 40)]
                 with patch.object(action_runner.GitHubClient, "get_pull_request", side_effect=responses), \
                         patch.object(action_runner, "_fetch_git"), \
@@ -136,6 +145,44 @@ class ActionRunnerTests(unittest.TestCase):
                 self.assertIsNone(result["probabilities"])
                 self.assertNotIn("Risk: `low`", (self.directory / "summary").read_text())
                 self.assertNotIn("risk_label=low", (self.directory / "output").read_text())
+                self.assert_no_model_verdict(result)
+
+    def assert_no_model_verdict(self, result):
+        for key in ("model_label", "low_blocked_by", "mechanisms"):
+            self.assertNotIn(key, result)
+        for text in ((self.directory / "summary").read_text(), (self.directory / "output").read_text()):
+            for line in ("Model label", "Rules that block low", "Raised from", "- R4", "Mechanisms:"):
+                self.assertNotIn(line, text)
+
+    def test_rejected_sdk_result_publishes_no_model_verdict(self):
+        cases = [("invalid_result", {"risk_label": "critical"}),
+                 ("invalid_response", {"status": "invalid_response", "risk_label": None, "probabilities": None})]
+        for status, change in cases:
+            scored = classification()
+            scored.update(sdk_result_fields(), **change)
+            with self.subTest(status=status), \
+                    patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
+                    patch.object(action_runner, "_fetch_git"), \
+                    patch.object(action_runner, "_run_scorer", return_value=scored):
+                for name in ("summary", "output"):
+                    (self.directory / name).write_text("")
+                code, result, _ = self.invoke()
+                self.assertEqual(code, 1)
+                self.assertEqual(result["status"], status)
+                self.assertIsNone(result["risk_label"])
+                self.assertEqual(result["sdk"]["families_touched"], ["server"])
+                self.assert_no_model_verdict(result)
+
+    def test_missing_sdk_data_fails_before_network(self):
+        with patch.object(action_runner, "SOURCE_ROOT", self.directory / "incomplete-checkout"), \
+                patch.object(action_runner, "GitHubClient") as client, \
+                patch.object(action_runner, "_fetch_git") as fetch:
+            code, result, _ = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "missing_sdk_data")
+        self.assertIsNone(result["risk_label"])
+        client.assert_not_called()
+        fetch.assert_not_called()
 
     def test_context_rejection_remains_visible_and_unclassified(self):
         scored = classification()

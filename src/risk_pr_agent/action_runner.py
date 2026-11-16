@@ -17,6 +17,8 @@ from .github import GitHubClient, GitHubError, RepoRef
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
+# SDK-mode fields that describe the model's judgement; only an ``ok`` result carries them.
+_VERDICT_FIELDS = ("model_label", "low_blocked_by", "mechanisms")
 
 
 class ActionError(RuntimeError):
@@ -116,6 +118,10 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         if repo.name in (".", ".."):
             raise ActionError("invalid_repository")
         result.update(repo=repo.slug, number=number, example_id=f"{repo.slug}#{number}")
+        # SDK fact sheets and the rubric ship with the action. Without them every SDK
+        # repository would silently fall back to default mode, so refuse to run.
+        if not (SOURCE_ROOT / "sdk" / "defaults.toml").is_file():
+            raise ActionError("missing_sdk_data")
         expected_head = _sha(expected_head) if expected_head else ""
         if not os.environ.get("AI_GATEWAY_API_KEY"):
             raise ActionError("missing_credentials")
@@ -147,6 +153,10 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         # Child output and HTTP bodies can include arbitrary PR text. Keep them
         # out of logs and artifacts; the status makes the failure visible.
         result.update(status="action_error", risk_label=None, probabilities=None)
+    if result.get("status") != "ok":
+        # The action does not vouch for this result, so it publishes no model verdict.
+        for key in _VERDICT_FIELDS:
+            result.pop(key, None)
     _publish(result, result_path)
     return 0 if result.get("status") == "ok" else 1
 

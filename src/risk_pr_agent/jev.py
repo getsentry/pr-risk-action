@@ -661,7 +661,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                         row.update(risk_label=None, probabilities=None)
                     if "sdk" in built:
                         from .sdk_rules import apply_rules
-                        row["mechanisms"] = response.get("mechanisms")
+                        # A response the worker or validation rejected carries no mechanisms.
+                        row["mechanisms"] = response.get("mechanisms") if row["status"] == "ok" else None
                         apply_rules(row)
             row["attempts"] = attempts
             row["cache_hit"] = cache_hit

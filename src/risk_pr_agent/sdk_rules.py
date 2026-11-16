@@ -44,7 +44,10 @@ def apply_rules(row):
         return
     mechanisms = row.get("mechanisms")
     if not isinstance(mechanisms, dict) or set(mechanisms) != set(MECHANISMS):
-        row.update(status="invalid_response", risk_label=None, probabilities=None, model_label=None)
+        row.update(status="invalid_response", risk_label=None, probabilities=None, model_label=None,
+                   mechanisms=None)
+        if not row.get("error"):
+            row["error"] = {"name": "invalid_mechanisms"}
         return
     row["model_label"] = row.get("risk_label")
     row["low_blocked_by"] = evaluate_rules(row)

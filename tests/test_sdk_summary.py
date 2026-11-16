@@ -44,7 +44,8 @@ class SdkSummaryTests(unittest.TestCase):
         self.assertTrue(summary.endswith("\n\n" + disclaimer + "\n"))
         lines = summary.split("\n")
         bullet = next(i for i, line in enumerate(lines) if line.startswith("- R4"))
-        self.assertEqual((lines[bullet - 1], lines[bullet + 1]), ("", ""))
+        self.assertEqual((lines[bullet - 2], lines[bullet - 1], lines[bullet + 1]),
+                         ("", "Rules that block low:", ""))
         self.assertEqual(lines[lines.index("Model label: `low`") - 1], "")
         self.assertLess(summary.index("Mechanisms:"), summary.index(disclaimer))
         self.assertNotIn("\n\n\n", summary)
@@ -81,6 +82,22 @@ class SdkSummaryTests(unittest.TestCase):
         long = risk_summary(sdk_row(files=["x" * 500]))
         self.assertIn("`" + "x" * 200 + "`", long)
         self.assertNotIn("x" * 201, long)
+
+    def test_fired_rules_on_a_medium_row_have_a_heading(self):
+        summary = risk_summary(sdk_row(model="medium", final="medium", rule="R3", files=["new/x.kt"]))
+        self.assertNotIn("Raised from", summary)
+        self.assertIn("\nRules that block low:\n- R3", summary)
+
+    def test_no_heading_without_fired_rules(self):
+        row = sdk_row(model="medium", final="medium")
+        row["low_blocked_by"] = []
+        self.assertNotIn("Rules that block low", risk_summary(row))
+
+    def test_malformed_mechanisms_are_skipped(self):
+        for mechanisms in ([0.1, 0.2], "m_data", {"m_data": "high"}, {"m_data": None}, {"m_data": True}):
+            with self.subTest(mechanisms=mechanisms):
+                summary = risk_summary(sdk_row(mechanisms=mechanisms))
+                self.assertNotIn("Mechanisms:", summary)
 
     def test_failed_row_with_sdk_only_does_not_crash(self):
         row = {"status": "timeout", "risk_label": None, "sdk": {"families_touched": ["server"]}}

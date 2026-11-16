@@ -82,6 +82,26 @@ class RulesTest(unittest.TestCase):
         self.assertEqual((value["status"], value["risk_label"]), ("invalid_response", None))
         self.assertIsNone(value["model_label"])
 
+    def test_invalidation_clears_mechanisms_and_records_reason(self):
+        value = row()
+        value["mechanisms"].pop("m_data")
+        apply_rules(value)
+        self.assertIsNone(value["mechanisms"])
+        self.assertEqual(value["error"], {"name": "invalid_mechanisms"})
+        self.assertNotIn("low_blocked_by", value)
+
+    def test_invalidation_keeps_an_existing_error(self):
+        value = row(mechanisms=[0.1], error={"name": "Upstream"})
+        apply_rules(value)
+        self.assertIsNone(value["mechanisms"])
+        self.assertEqual(value["error"], {"name": "Upstream"})
+
+    def test_absent_context_stage_fires_r1(self):
+        value = row()
+        del value["context_stage"]
+        self.assertEqual(self.fired(value), ["R1"])
+        self.assertEqual(value["risk_label"], "medium")
+
     def test_non_ok_row_is_untouched(self):
         value = {"status": "timeout", "risk_label": None}
         apply_rules(value)
@@ -103,6 +123,36 @@ class ScoreSnapshotsTest(unittest.TestCase):
         self.assertEqual((value["status"], value["model_label"], value["risk_label"]), ("ok", "low", "medium"))
         self.assertEqual(value["low_blocked_by"][0]["rule"], "R4")
         self.assertEqual(set(value["mechanisms"]), set(MECHANISMS))
+
+    def test_cache_hit_row_keeps_rules_and_final_label(self):
+        source = sdk_snapshot(["core/api/core.api"])
+        source["repo"] = "org/project"
+        worker = lambda _: success(probabilities={"low": .97, "medium": .02, "high": .01},
+                                   mechanisms={name: 0.05 for name in MECHANISMS})
+
+        def refuse(_):
+            raise AssertionError("the worker must not be called on a cache hit")
+
+        with tempfile.TemporaryDirectory() as out:
+            first = score_snapshots([source], out, worker=worker, price_snapshot=PRICE)[0]
+            second = score_snapshots([source], out, worker=refuse, price_snapshot=PRICE)[0]
+        self.assertFalse(first["cache_hit"])
+        self.assertTrue(second["cache_hit"])
+        self.assertEqual((second["model_label"], second["risk_label"]), ("low", "medium"))
+        self.assertEqual(second["low_blocked_by"], first["low_blocked_by"])
+        self.assertEqual(second["risk_label"], first["risk_label"])
+
+    def test_invalid_response_row_carries_no_mechanisms(self):
+        source = sdk_snapshot(["core/src/main/A.kt"])
+        source["repo"] = "org/project"
+        mechanisms = {name: 0.05 for name in MECHANISMS}
+        mechanisms["m_data"] = 2
+        worker = lambda _: success(probabilities={"low": .97, "medium": .02, "high": .01}, mechanisms=mechanisms)
+        with tempfile.TemporaryDirectory() as out:
+            value = score_snapshots([source], out, worker=worker, price_snapshot=PRICE)[0]
+        self.assertEqual((value["status"], value["risk_label"]), ("invalid_response", None))
+        self.assertIsNone(value["mechanisms"])
+        self.assertNotIn("low_blocked_by", value)
 
     def test_non_sdk_row_gains_no_keys(self):
         value = self.score("org/other", "core/api/core.api")

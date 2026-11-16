@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tomllib
 import unittest
@@ -6,6 +7,12 @@ import tiktoken
 
 from risk_pr_agent.sdk_facts import FAMILIES, SDK_ROOT
 from risk_pr_agent.sdk_rubric import MECHANISMS, build_questions, rubric_version
+
+
+# The rubric wording is part of the cache identity only through `version`, so any
+# change to the file must come with a version bump. Update both values together.
+PINNED_RUBRIC = {"version": "1",
+                 "sha256": "7252a72e7420a942988228dce321b92b717773c337747227cc7210b9ad1af3d1"}
 
 
 class RubricTest(unittest.TestCase):
@@ -61,6 +68,14 @@ class RubricTest(unittest.TestCase):
 
     def test_rubric_version(self):
         self.assertEqual(rubric_version(), "1")
+
+    def test_rubric_wording_is_pinned_to_its_version(self):
+        digest = hashlib.sha256((SDK_ROOT / "rubric.toml").read_bytes()).hexdigest()
+        if digest != PINNED_RUBRIC["sha256"]:
+            self.fail(f"sdk/rubric.toml changed (sha256 {digest}). Bump `version` in sdk/rubric.toml, "
+                      f"then set PINNED_RUBRIC in tests/test_sdk_rubric.py to the new version and this sha256.")
+        self.assertEqual(rubric_version(), PINNED_RUBRIC["version"],
+                         "rubric version changed without its wording; update PINNED_RUBRIC together with the file")
 
 
 if __name__ == "__main__":

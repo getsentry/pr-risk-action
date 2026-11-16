@@ -30,6 +30,12 @@ def _load(root: Path | None) -> dict:
         raise ValueError(f"rubric.toml: [mechanisms] must define exactly {MECHANISMS}")
     if set(data.get("families", {})) != set(sdk_facts.FAMILIES):
         raise ValueError(f"rubric.toml: [families] must define exactly {sdk_facts.FAMILIES}")
+    for table in ("criteria", "mechanisms", "families"):
+        if not isinstance(data[table], dict):
+            raise ValueError(f"rubric.toml: [{table}] must be a table")
+        for key, value in data[table].items():
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"rubric.toml: {table}.{key} must be a non-empty string")
     for key in ("version", "instructions", "shared_core", "mechanism_preamble"):
         if not isinstance(data.get(key), str) or not data[key]:
             raise ValueError(f"rubric.toml: {key} must be a non-empty string")
