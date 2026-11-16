@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -34,6 +35,19 @@ class DefaultModeUnchangedTest(unittest.TestCase):
         self.assertEqual(built["configuration_hash"], BASELINE_CONFIGURATION_HASH)
         self.assertNotIn("sdk", built)
         self.assertNotIn("sdk", built["configuration"])
+
+    def test_unusable_repo_slug_builds_default_request(self):
+        for repo in ("not a slug", "../x/y"):
+            with self.subTest(repo=repo):
+                value = snapshot()
+                value["repo"] = repo
+                with patch("risk_pr_agent.sdk_facts.SDK_ROOT", FIXTURES):
+                    built = build_request(value)
+                self.assertEqual(built["status"], "ready")
+                self.assertEqual(built["request_hash"], BASELINE_REQUEST_HASH)
+                self.assertEqual(built["configuration_hash"], BASELINE_CONFIGURATION_HASH)
+                self.assertNotIn("sdk", built)
+                self.assertNotIn("sdk", built["configuration"])
 
 
 @patch("risk_pr_agent.sdk_facts.SDK_ROOT", FIXTURES)
@@ -89,6 +103,22 @@ class SdkModeTest(unittest.TestCase):
             built = build_request(sdk_snapshot(["core/src/main/A.kt"]))
         self.assertEqual(built["status"], "invalid_fact_sheet")
         self.assertNotIn("request", built)
+
+    def test_missing_rubric_fails_closed(self):
+        with tempfile.TemporaryDirectory() as empty, patch("risk_pr_agent.sdk_rubric.RUBRIC_ROOT", Path(empty)):
+            built = build_request(sdk_snapshot(["core/src/main/A.kt"]))
+        self.assertEqual(built["status"], "invalid_fact_sheet")
+        self.assertNotIn("request", built)
+        self.assertNotIn("sdk", built["configuration"])
+
+    def test_broken_rubric_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root, patch("risk_pr_agent.sdk_rubric.RUBRIC_ROOT", Path(root)):
+            for text in ("version = [", 'version = "1"\n'):
+                with self.subTest(text=text):
+                    (Path(root) / "rubric.toml").write_text(text)
+                    built = build_request(sdk_snapshot(["core/src/main/A.kt"]))
+                    self.assertEqual(built["status"], "invalid_fact_sheet")
+                    self.assertNotIn("request", built)
 
 
 if __name__ == "__main__":

@@ -83,9 +83,10 @@ class FactSheetTest(unittest.TestCase):
             with self.assertRaises(FactSheetError):
                 load_fact_sheet("org/project", root)
 
-    def test_bad_repo_slug_raises(self):
-        with self.assertRaises(FactSheetError):
-            load_fact_sheet("../x", ROOT)
+    def test_unusable_repo_slug_has_no_fact_sheet(self):
+        for repo in ("../x", "../x/y", "not a slug", "org/..", "org/project/extra", ""):
+            with self.subTest(repo=repo):
+                self.assertIsNone(load_fact_sheet(repo, ROOT))
 
 
 class ShippedSheetsTest(unittest.TestCase):

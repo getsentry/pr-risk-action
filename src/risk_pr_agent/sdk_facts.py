@@ -118,8 +118,10 @@ def _parse_areas(data: dict, where: str) -> list:
 
 def load_fact_sheet(repo: str, root: Path | None = None) -> dict | None:
     root = SDK_ROOT if root is None else root
+    # A string that is not an owner/name slug can never name a fact sheet; no
+    # file is read for it, so it cannot reach outside ``repos/``.
     if not _REPO_SLUG.match(repo):
-        raise FactSheetError(f"invalid repository slug: {repo!r}")
+        return None
     sheet_path = root / "repos" / (repo.lower().replace("/", "__") + ".toml")
     if not sheet_path.is_file():
         return None

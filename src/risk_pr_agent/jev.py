@@ -215,10 +215,12 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
         from . import sdk_facts, sdk_rubric
         try:
             sheet = sdk_facts.load_fact_sheet(snapshot["repo"])
-        except sdk_facts.FactSheetError:
-            sheet_error = True
-        if sheet is not None:
-            configuration["sdk"] = {"rubric_version": sdk_rubric.rubric_version(), "facts_hash": sheet["hash"]}
+            if sheet is not None:
+                # A broken rubric fails closed like a broken fact sheet. ValueError
+                # covers the rubric's validation errors and tomllib.TOMLDecodeError.
+                configuration["sdk"] = {"rubric_version": sdk_rubric.rubric_version(), "facts_hash": sheet["hash"]}
+        except (ValueError, OSError):
+            sheet, sheet_error = None, True
     result = {"configuration": configuration, "configuration_hash": _hash(configuration), "omitted": []}
     profile = input_profile or "diff"
     stages = {"metadata-files": ("full_files", "diff_only"),
