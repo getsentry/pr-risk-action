@@ -38,6 +38,23 @@ class SdkSummaryTests(unittest.TestCase):
         self.assertLess(summary.index("public contract"), summary.index("ships to customers"))
         self.assertIn("0.90", summary)
 
+    def test_layout_puts_sdk_lines_before_the_disclaimer(self):
+        summary = risk_summary(sdk_row())
+        disclaimer = "Class probabilities describe the risk rubric, not incident likelihood."
+        self.assertTrue(summary.endswith("\n\n" + disclaimer + "\n"))
+        lines = summary.split("\n")
+        bullet = next(i for i, line in enumerate(lines) if line.startswith("- R4"))
+        self.assertEqual((lines[bullet - 1], lines[bullet + 1]), ("", ""))
+        self.assertEqual(lines[lines.index("Model label: `low`") - 1], "")
+        self.assertLess(summary.index("Mechanisms:"), summary.index(disclaimer))
+        self.assertNotIn("\n\n\n", summary)
+        no_mechanisms = sdk_row()
+        del no_mechanisms["mechanisms"]
+        self.assertNotIn("\n\n\n", risk_summary(no_mechanisms))
+
+    def test_empty_sanitised_path_is_named(self):
+        self.assertIn("`(unnamed path)`", risk_summary(sdk_row(files=["``\n"])))
+
     def test_no_raise_sentence_when_labels_match_and_none_touched(self):
         row = sdk_row(model="medium", final="medium")
         row["sdk"]["families_touched"] = []

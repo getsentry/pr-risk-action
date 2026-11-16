@@ -323,7 +323,7 @@ _SHOWN_PATHS = 5
 def _code_span(path: Any) -> str:
     """Render an untrusted path inertly: no backticks, control or line-break characters, bounded length."""
     text = "".join(ch for ch in str(path) if ch != "`" and unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp"))
-    return f"`{text[:200]}`"
+    return f"`{text[:200] or '(unnamed path)'}`"
 
 
 def _sdk_summary_lines(result: Dict[str, Any]) -> List[str]:
@@ -339,6 +339,7 @@ def _sdk_summary_lines(result: Dict[str, Any]) -> List[str]:
     families = (result.get("sdk") or {}).get("families_touched")
     if families is not None:
         lines.append("Families touched: " + (", ".join(str(family) for family in families) or "none"))
+    bullets: List[str] = []
     for item in blocked:
         rule = str(item.get("rule"))
         text = _RULE_TEXT.get(rule, "").format(threshold=LOW_PROBABILITY_THRESHOLD)
@@ -348,12 +349,16 @@ def _sdk_summary_lines(result: Dict[str, Any]) -> List[str]:
             line += ": " + ", ".join(_code_span(path) for path in files[:_SHOWN_PATHS])
             if len(files) > _SHOWN_PATHS:
                 line += f" and {len(files) - _SHOWN_PATHS} more"
-        lines.append(line)
+        bullets.append(line)
+    if bullets:
+        lines += [""] + bullets + [""]
     mechanisms = result.get("mechanisms")
     if mechanisms:
         ranked = sorted(mechanisms.items(), key=lambda pair: -pair[1])
         lines.append("Mechanisms: " + ", ".join(
             f"{_MECHANISM_NAMES.get(key, key)}={value:.2f}" for key, value in ranked))
+    while lines and not lines[-1]:
+        lines.pop()
     return lines
 
 
@@ -367,9 +372,11 @@ def risk_summary(result: Dict[str, Any]) -> str:
         lines.append("Code context was truncated to fit; PR metadata and all file paths were retained.")
     if result.get("estimated_input_tokens") is not None:
         lines.append(f"Estimated input tokens: {result['estimated_input_tokens']} (proxy tokenizer, not Jev's measured usage).")
-    lines += ["", "Class probabilities describe the risk rubric, not incident likelihood."]
     if any(key in result for key in _SDK_FIELDS):
-        lines += _sdk_summary_lines(result)
+        sdk_lines = _sdk_summary_lines(result)
+        if sdk_lines:
+            lines += [""] + sdk_lines
+    lines += ["", "Class probabilities describe the risk rubric, not incident likelihood."]
     return "\n".join(lines) + "\n"
 
 
