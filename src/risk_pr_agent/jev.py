@@ -447,8 +447,10 @@ class Worker:
             return {"status": "missing_credentials", "retryable": False}
         if self.process is None or self.process.poll() is not None:
             self.close()
+            # The worker needs only the Gateway key, never a GitHub token.
+            environment = {key: value for key, value in os.environ.items() if key not in ("GITHUB_TOKEN", "GH_TOKEN")}
             self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+                                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=environment)
         try:
             self.process.stdin.write(_json({"request": request, "timeout_ms": self.timeout_ms}) + "\n")
             self.process.stdin.flush()

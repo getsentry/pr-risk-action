@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, Optional
 
-from .github import GITHUB_API, RepoRef
+from .github import _OPENER, GITHUB_API, RepoRef
 
 
 # Risk class -> (label name, colour). The description is "PR risk score: <class>".
@@ -42,15 +42,6 @@ class LabelError(RuntimeError):
     def __init__(self, message: str, cleanup_failed: bool = False) -> None:
         super().__init__(message)
         self.cleanup_failed = cleanup_failed
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    # A redirect would resend the Authorization header to wherever it points.
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def default_transport() -> Transport:
@@ -97,6 +88,8 @@ class RiskLabels:
     def publish(self, level: str, is_current: Callable[[], bool]) -> bool:
         """Add the label for ``level`` if the PR still is the scored revision.
 
+        The other two risk labels are removed immediately before the add.
+
         Returns True when the label is on the PR and the PR was unchanged after it
         was added, False when the PR changed (nothing left on the PR). Raises
         LabelError on any failure, after trying to remove a label it may have added;
@@ -109,6 +102,10 @@ class RiskLabels:
             if not is_current():
                 return False
             self._ensure_exists(level)
+            # An earlier run killed after adding its label may have left another one.
+            for other in RISK_LABELS:
+                if other != level:
+                    self._remove(other)
             may_be_added = True
             self._send("POST", self._issue_labels, {"labels": [RISK_LABELS[level][0]]}, (200,))
             unchanged = is_current()

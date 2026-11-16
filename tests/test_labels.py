@@ -5,7 +5,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from risk_pr_agent import labels
+from risk_pr_agent import github, labels
 from risk_pr_agent.github import GitHubError, RepoRef
 
 
@@ -76,6 +76,12 @@ def _raise(error):
     raise error
 
 
+def deletes_after_add(fake):
+    """DELETE requests sent after the first add, i.e. the publisher's own clean-up."""
+    added = next(index for index, (method, url, _) in enumerate(fake.calls) if (method, url) == ("POST", ISSUE_LABELS))
+    return [method for method, _, _ in fake.calls[added:]].count("DELETE")
+
+
 def current(*answers):
     answers = list(answers)
     return lambda: answers.pop(0)
@@ -116,7 +122,26 @@ class RiskLabelsTests(CheckedFakes, unittest.TestCase):
         self.assertTrue(self.labels(fake).publish("medium", current(True, True)))
         self.assertEqual(fake.pr_labels, {"risk: medium"})
         self.assertEqual(fake.calls, [("GET", f"{REPO_LABELS}/{ENCODED['medium']}", None),
+                                      ("DELETE", f"{ISSUE_LABELS}/{ENCODED['low']}", None),
+                                      ("DELETE", f"{ISSUE_LABELS}/{ENCODED['high']}", None),
                                       ("POST", ISSUE_LABELS, {"labels": ["risk: medium"]})])
+
+    def test_publish_removes_the_other_risk_labels_immediately_before_adding(self):
+        # A label left by an earlier, interrupted run must not coexist with the new one.
+        fake = self.fake(pr_labels={"risk: high", "risk: medium", "bug"})
+        self.assertTrue(self.labels(fake).publish("low", current(True, True)))
+        self.assertEqual(fake.pr_labels, {"bug", "risk: low"})
+        self.assertEqual(fake.events, [("removed", "risk: medium"), ("removed", "risk: high"),
+                                       ("added", "risk: low")])
+
+    def test_publish_adds_nothing_when_removing_another_risk_label_fails(self):
+        fake = self.fake(pr_labels={"risk: high"},
+                         fail=lambda method, url, body: 403 if method == "DELETE" else None)
+        with self.assertRaises(labels.LabelError) as caught:
+            self.labels(fake).publish("low", current(True, True))
+        self.assertFalse(caught.exception.cleanup_failed)
+        self.assertEqual(fake.pr_labels, {"risk: high"})
+        self.assertNotIn(("POST", ISSUE_LABELS), [(method, url) for method, url, _ in fake.calls])
 
     def test_publish_creates_a_missing_label_with_exact_colour_and_description(self):
         for level, (name, colour) in labels.RISK_LABELS.items():
@@ -150,7 +175,7 @@ class RiskLabelsTests(CheckedFakes, unittest.TestCase):
                 remaining = [failures]
 
                 def fail(method, url, body):
-                    if method == "DELETE" and remaining[0]:
+                    if method == "DELETE" and ("added", "risk: low") in fake.events and remaining[0]:
                         remaining[0] -= 1
                         return 403
                     return None
@@ -164,10 +189,10 @@ class RiskLabelsTests(CheckedFakes, unittest.TestCase):
                         self.labels(fake).publish("low", current(True, False))
                     self.assertTrue(caught.exception.cleanup_failed)
                     self.assertEqual(fake.pr_labels, {"risk: low"})
-                self.assertEqual([method for method, _, _ in fake.calls].count("DELETE"), min(failures + 1, 3))
+                self.assertEqual(deletes_after_add(fake), min(failures + 1, 3))
 
     def test_clean_up_after_error_is_tried_three_times(self):
-        fake = self.fake(fail=lambda method, url, body: 403 if method == "DELETE" else None)
+        fake = self.fake(fail=lambda method, url, body: 403 if method == "DELETE" and fake.pr_labels else None)
 
         def is_current():
             if fake.pr_labels:
@@ -177,7 +202,7 @@ class RiskLabelsTests(CheckedFakes, unittest.TestCase):
         with self.assertRaises(labels.LabelError) as caught:
             self.labels(fake).publish("low", is_current)
         self.assertTrue(caught.exception.cleanup_failed)
-        self.assertEqual([method for method, _, _ in fake.calls].count("DELETE"), 3)
+        self.assertEqual(deletes_after_add(fake), 3)
 
     def test_transport_exceptions_become_label_errors(self):
         def raising(method):
@@ -195,12 +220,12 @@ class RiskLabelsTests(CheckedFakes, unittest.TestCase):
         self.assertFalse(caught.exception.cleanup_failed)
         self.assertEqual(fake.calls[-1][0], "DELETE")
         fake = self.fake()
-        fake.fail = lambda m, url, body: (_raise(ssl.SSLError("tls")) if m == "DELETE" else None)
+        fake.fail = lambda m, url, body: (_raise(ssl.SSLError("tls")) if m == "DELETE" and fake.pr_labels else None)
         with self.assertRaises(labels.LabelError) as caught:
             self.labels(fake).publish("low", current(True, False))
         self.assertTrue(caught.exception.cleanup_failed)
         # Three clean-up attempts, each retried like any server error.
-        self.assertEqual([m for m, _, _ in fake.calls].count("DELETE"), 3 * 3)
+        self.assertEqual(deletes_after_add(fake), 3 * 3)
         self.assertEqual(fake.pr_labels, {"risk: low"})
 
     def test_cancellation_after_add_removes_the_label_and_propagates(self):
@@ -231,12 +256,14 @@ class RiskLabelsTests(CheckedFakes, unittest.TestCase):
                         return answers.pop()
                     raise KeyboardInterrupt
 
-                fake = self.fake(fail=lambda method, url, body: status if method == "DELETE" else None)
+                fake = self.fake(fail=lambda method, url, body: status if method == "DELETE" and fake.pr_labels else None)
                 sleeps = []
                 risk_labels = labels.RiskLabels(REPO, 7, transport=fake, sleep=sleeps.append)
                 with self.assertRaises(KeyboardInterrupt):
                     risk_labels.publish("low", is_current)
-                deletes = [timeout for (method, _, _), timeout in zip(fake.calls, fake.timeouts) if method == "DELETE"]
+                added = fake.calls.index(("POST", ISSUE_LABELS, {"labels": ["risk: low"]}))
+                deletes = [timeout for (method, _, _), timeout in zip(fake.calls[added:], fake.timeouts[added:])
+                           if method == "DELETE"]
                 self.assertEqual(deletes, [5])
                 self.assertEqual(sleeps, [])
 
@@ -343,7 +370,7 @@ class TransportTests(unittest.TestCase):
                 self.assertGreaterEqual(labels.default_transport()("GET", REPO_LABELS + "/x", None), 500)
 
     def test_redirects_are_not_followed(self):
-        handler = labels._NoRedirect()
+        handler = github._NoRedirect()
         self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {}, "https://example.invalid/"))
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from collections import Counter, defaultdict
@@ -187,8 +188,14 @@ def derive_outcomes(rows: Sequence[Dict[str, Any]], observation_cutoff: str) -> 
     return results
 
 
+# Git reads a local repository; it needs neither credential.
+_GIT_WITHHELD = ("GITHUB_TOKEN", "GH_TOKEN", "AI_GATEWAY_API_KEY")
+
+
 def _git(repo: str, *args: str, input_data: Optional[bytes] = None) -> bytes:
-    return subprocess.run(["git", "-C", str(repo), *args], input=input_data, check=True, capture_output=True).stdout
+    environment = {key: value for key, value in os.environ.items() if key not in _GIT_WITHHELD}
+    return subprocess.run(["git", "-C", str(repo), *args], input=input_data, check=True, capture_output=True,
+                          env=environment).stdout
 
 
 def _commit(repo: str, sha: Any) -> str:

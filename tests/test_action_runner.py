@@ -42,6 +42,13 @@ def sdk_result_fields():
                     "shared_core": False, "files": []}}
 
 
+def sdk_classification(risk_label="low"):
+    """An SDK-mode scorer result, the only kind whose label is published."""
+    scored = classification()
+    scored.update(sdk_result_fields(), risk_label=risk_label, low_blocked_by=[])
+    return scored
+
+
 class RunnerTestCase(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -361,7 +368,7 @@ class ActionRunnerTests(RunnerTestCase):
 class LabelPublishingTests(CheckedFakes, RunnerTestCase):
     def run_enabled(self, fake, scored=None, responses=None, events=None):
         events = fake.events if events is None else events
-        scored = classification() if scored is None else scored
+        scored = sdk_classification() if scored is None else scored
 
         def score(*args, **kwargs):
             events.append(("score",))
@@ -461,15 +468,14 @@ class LabelPublishingTests(CheckedFakes, RunnerTestCase):
                 if name == "clear":
                     scorer.assert_not_called()
                 if cleanup_failed:
-                    # Clearing, then three clean-up attempts each retried like a server error.
-                    self.assertEqual([m for m, _, _ in fake.calls].count("DELETE"), 3 + 3 * 3)
+                    # Clearing, re-clearing the other two before the add, then three
+                    # clean-up attempts each retried like a server error.
+                    self.assertEqual([m for m, _, _ in fake.calls].count("DELETE"), 3 + 2 + 3 * 3)
                     self.assertIn("may still be on the PR", (self.directory / "summary").read_text())
 
     def test_old_labels_are_cleared_before_scoring_then_final_label_added(self):
         fake = self.fake(pr_labels={"risk: low", "risk: high", "bug"})
-        scored = classification()
-        scored["risk_label"] = "medium"
-        code, result, output, _, scorer = self.run_enabled(fake, scored)
+        code, result, output, _, scorer = self.run_enabled(fake, sdk_classification("medium"))
         self.assertEqual(code, 0)
         self.assertEqual(fake.events, [("removed", "risk: low"), ("removed", "risk: high"), ("score",),
                                        ("added", "risk: medium")])
@@ -565,6 +571,38 @@ class LabelPublishingTests(CheckedFakes, RunnerTestCase):
             fake, responses=[pull_request(), pull_request(), GitHubError("PRIVATE_MARKER github-test-key")])
         self.assertEqual((code, result["status"], result["label_published"]), (1, "label_error", False))
         self.assertNotIn("PRIVATE_MARKER", json.dumps(result))
+
+    def test_result_without_fact_sheet_publishes_no_label(self):
+        # Default mode has no rules R1-R7, so its low must not look like a gated one.
+        without_model_label = sdk_classification()
+        del without_model_label["model_label"]
+        without_sdk = sdk_classification()
+        del without_sdk["sdk"]
+        for name, scored in (("default_mode", classification()), ("no_model_label", without_model_label),
+                             ("no_sdk", without_sdk)):
+            with self.subTest(name=name):
+                fake = self.fake(pr_labels={"risk: low", "bug"})
+                for path in ("summary", "output"):
+                    (self.directory / path).write_text("")
+                code, result, output, _, _ = self.run_enabled(fake, scored)
+                self.assertEqual((code, result["status"], result["risk_label"]), (0, "ok", "low"))
+                self.assertIs(result["label_published"], False)
+                self.assertEqual(result["label_skipped"], "no_fact_sheet")
+                self.assertEqual(fake.pr_labels, {"bug"})
+                self.assertNotIn("POST", [method for method, _, _ in fake.calls])
+                self.assertIn("risk_label=low\nstatus=ok\n", output)
+                self.assertTrue(output.endswith("\nlabel_published=false\n"))
+                self.assertEqual((self.directory / "summary").read_text().count(
+                    "No risk label is published for repositories without an SDK fact sheet."), 1)
+
+    def test_scorer_label_skipped_field_is_not_trusted(self):
+        scored = sdk_classification()
+        scored["label_skipped"] = "no_fact_sheet"
+        fake = self.fake()
+        code, result, _, _, _ = self.run_enabled(fake, scored)
+        self.assertEqual((code, result["label_published"]), (0, True))
+        self.assertNotIn("label_skipped", result)
+        self.assertNotIn("without an SDK fact sheet", (self.directory / "summary").read_text())
 
     def test_published_label_is_the_final_label_not_the_model_label(self):
         scored = classification()

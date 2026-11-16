@@ -23,6 +23,16 @@ class GitHubError(RuntimeError):
     """Raised when the GitHub API returns an error."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # A redirect would resend the Authorization header to wherever it points;
+    # refused, it surfaces as an HTTPError with the 3xx status.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 @dataclass(frozen=True)
 class RepoRef:
     owner: str
@@ -63,7 +73,7 @@ class GitHubClient:
         waited_for_rate_limit = False
         for attempt in range(self.max_retries + 1):
             try:
-                with urllib.request.urlopen(request, timeout=60) as response:
+                with _OPENER.open(request, timeout=60) as response:
                     raw = response.read()
                     if self.sleep_seconds:
                         time.sleep(self.sleep_seconds)

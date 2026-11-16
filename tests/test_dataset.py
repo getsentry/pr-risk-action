@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 from risk_pr_agent.dataset import (
     DEFAULT_REPOS, derive_outcomes, prepare_dataset, prepare_snapshot, refresh_snapshot_metadata, related_test_score, select_dataset,
 )
+from risk_pr_agent import dataset
 from risk_pr_agent.jev import build_request
 
 
@@ -166,6 +168,25 @@ class RelatedTestScoreTests(unittest.TestCase):
 
     def test_changed_test_paths_are_normalized_too(self):
         self.assertEqual(related_test_score("tests/query/test_foo.py", ["tests/query/foo_test.py"])[:2], (-1, -1))
+
+
+class GitEnvironmentTests(unittest.TestCase):
+    def test_git_children_get_no_token_or_gateway_key(self):
+        seen = []
+
+        def run(args, **kwargs):
+            seen.append(kwargs.get("env"))
+            return subprocess.CompletedProcess(args, 0, stdout=b"")
+
+        secrets = {"GITHUB_TOKEN": "github-test-key", "GH_TOKEN": "gh-test-key",
+                   "AI_GATEWAY_API_KEY": "gateway-test-key", "PATH": os.environ.get("PATH", "")}
+        with patch.dict(os.environ, secrets), patch.object(dataset.subprocess, "run", side_effect=run):
+            dataset._git("/repo", "rev-parse", "HEAD")
+        self.assertEqual(len(seen), 1)
+        self.assertIsNotNone(seen[0])
+        for key in ("GITHUB_TOKEN", "GH_TOKEN", "AI_GATEWAY_API_KEY"):
+            self.assertNotIn(key, seen[0])
+        self.assertEqual(seen[0]["PATH"], os.environ.get("PATH", ""))
 
 
 class SnapshotTests(unittest.TestCase):

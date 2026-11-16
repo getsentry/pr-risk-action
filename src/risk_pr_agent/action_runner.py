@@ -13,6 +13,7 @@ import sys
 import tempfile
 from typing import Any, Dict
 
+from .clear_labels import TargetError, check_server, parse_target
 from .commands import risk_summary
 from .github import GitHubClient, GitHubError, RepoRef
 from .labels import RISK_LABELS, LabelError, RiskLabels
@@ -88,7 +89,7 @@ def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
 
 
 def _publish(result: Dict[str, Any], result_path: str, label_published: bool = False,
-             label_cleanup_failed: bool = False) -> None:
+             label_cleanup_failed: bool = False, label_skipped: bool = False) -> None:
     output = Path(result_path)
     if not output.is_absolute():
         output = Path(os.environ.get("GITHUB_WORKSPACE", os.getcwd())) / output
@@ -97,6 +98,8 @@ def _publish(result: Dict[str, Any], result_path: str, label_published: bool = F
     summary = risk_summary(result) + "\n"
     if label_cleanup_failed:
         summary += "A risk label may still be on the PR; the next run will clear it.\n\n"
+    if label_skipped:
+        summary += "No risk label is published for repositories without an SDK fact sheet.\n\n"
     summary += "Jev candidate result; this check does not authorize merging.\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
@@ -148,25 +151,30 @@ def _publish_risk_label(risk_labels: RiskLabels, result: Dict[str, Any], client:
         result.update(status=status, risk_label=None, probabilities=None)
 
 
+def _gated(result: Dict[str, Any]) -> bool:
+    """An SDK-mode result: its label passed the fact-sheet rules R1-R7."""
+    return result.get("model_label") in RISK_LABELS and isinstance(result.get("sdk"), dict)
+
+
 def run_action(repo_value: str, number_value: str, result_path: str,
                expected_head: str = "", publish_label: bool = False) -> int:
     result: Dict[str, Any] = {"schema_version": 2, "candidate": True,
                               "input_profile": "metadata-diff", "risk_label": None}
     risk_labels = client = revision = None
     try:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repo_value):
-            raise ActionError("invalid_repository")
-        if not re.fullmatch(r"[1-9][0-9]*", number_value):
-            raise ActionError("invalid_pr_number")
-        repo, number = RepoRef.parse(repo_value), int(number_value)
-        if repo.name in (".", ".."):
-            raise ActionError("invalid_repository")
+        try:
+            repo, number = parse_target(repo_value, number_value)
+        except TargetError as error:
+            raise ActionError(str(error)) from None
         result.update(repo=repo.slug, number=number, example_id=f"{repo.slug}#{number}")
         if publish_label:
-            # Writes go to api.github.com only, so check the server before clearing.
-            # Clear before every later exit so no run leaves an earlier revision's label.
-            if os.environ.get("GITHUB_SERVER_URL", "https://github.com") != "https://github.com":
-                raise ActionError("unsupported_repository")
+            # The action's first step has already cleared; this second clear also
+            # covers a direct call. Clear before every later exit so no run leaves
+            # an earlier revision's label.
+            try:
+                check_server()
+            except TargetError as error:
+                raise ActionError(str(error)) from None
             risk_labels = _clear_risk_labels(repo, number)
         # SDK fact sheets and the rubric ship with the action. Without them every SDK
         # repository would silently fall back to default mode, so refuse to run.
@@ -207,14 +215,20 @@ def run_action(repo_value: str, number_value: str, result_path: str,
     if publish_label:
         result["label_published"] = False
         result.pop("label_cleanup_failed", None)
+        result.pop("label_skipped", None)
         if risk_labels and revision and result.get("status") == "ok" and result.get("risk_label") in RISK_LABELS:
-            _publish_risk_label(risk_labels, result, client, repo, number, revision)
+            if _gated(result):
+                _publish_risk_label(risk_labels, result, client, repo, number, revision)
+            else:
+                # Default mode has no rules, so its low must not look like a gated one.
+                result["label_skipped"] = "no_fact_sheet"
     if result.get("status") != "ok":
         # The action does not vouch for this result, so it publishes no model verdict.
         for key in _VERDICT_FIELDS:
             result.pop(key, None)
     _publish(result, result_path, label_published=publish_label and result["label_published"] is True,
-             label_cleanup_failed=publish_label and result.get("label_cleanup_failed") is True)
+             label_cleanup_failed=publish_label and result.get("label_cleanup_failed") is True,
+             label_skipped=publish_label and result.get("label_skipped") == "no_fact_sheet")
     return 0 if result.get("status") == "ok" else 1
 
 

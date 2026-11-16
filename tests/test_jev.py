@@ -2,6 +2,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -722,7 +723,10 @@ class WorkerTransportTests(unittest.TestCase):
         starts = Path(self.directory.name) / "starts"
         real_popen = subprocess.Popen
 
+        self.launch_environments = []
+
         def launch(_command, **kwargs):
+            self.launch_environments.append(kwargs.get("env"))
             process = real_popen([sys.executable, str(fixture), self.mode, str(starts)], **kwargs)
             self.processes.append(process)
             return process
@@ -750,6 +754,16 @@ class WorkerTransportTests(unittest.TestCase):
         self.assertIsNotNone(self.processes[0].poll())
         self.assertTrue(self.processes[0].stdin.closed)
         self.assertTrue(self.processes[0].stdout.closed)
+
+    def test_worker_environment_has_the_gateway_key_but_no_github_token(self):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "github-test-key", "GH_TOKEN": "gh-test-key"}):
+            self.assertEqual(self.worker({"state": {}})["request"], {"state": {}})
+        environment = self.launch_environments[0]
+        self.assertIsNotNone(environment)
+        self.assertNotIn("GITHUB_TOKEN", environment)
+        self.assertNotIn("GH_TOKEN", environment)
+        self.assertEqual(environment["AI_GATEWAY_API_KEY"], "transport-test-only")
+        self.assertEqual(environment.get("PATH"), os.environ.get("PATH"))
 
     def test_timeout_terminates_peer_and_next_request_cannot_read_stale_response(self):
         self.mode = "timeout"
