@@ -109,7 +109,9 @@ class ActionRunnerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(result["risk_label"], "low")
         self.assertIn("Jev candidate", summary)
-        self.assertEqual((self.directory / "output").read_text(), "risk_label=low\nstatus=ok\n")
+        output = (self.directory / "output").read_text()
+        self.assertTrue(output.startswith("risk_label=low\nstatus=ok\nsummary<<"))
+        self.assertEqual(output.count("risk_label="), 1)
 
     def test_old_trigger_does_not_score_a_new_head(self):
         with patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
