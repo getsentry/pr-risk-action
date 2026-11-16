@@ -189,6 +189,9 @@ def build_parser() -> argparse.ArgumentParser:
     held.add_argument("--selection", required=True)
     held.add_argument("--out", required=True)
     held.set_defaults(func=cmd_holdout)
+    coverage = sub.add_parser("sdk-coverage", help="Tag paths read from stdin with a repo's SDK fact sheet")
+    coverage.add_argument("--repo", required=True)
+    coverage.set_defaults(func=cmd_sdk_coverage)
     return parser
 
 
@@ -453,12 +456,38 @@ def cmd_holdout(args) -> None:
     print(f"Held-out result written to {args.out}")
 
 
+def cmd_sdk_coverage(args) -> int:
+    from .sdk_facts import load_fact_sheet, tag_path
+    sheet = load_fact_sheet(args.repo)
+    if sheet is None:
+        print(f"risk-pr: no SDK fact sheet for {args.repo}", file=sys.stderr)
+        return 2
+    paths = [line.strip() for line in sys.stdin if line.strip()]
+    by_family: Dict[str, int] = {}
+    by_kind: Dict[str, int] = {}
+    shared_core = 0
+    unmapped = []
+    for path in paths:
+        tags = tag_path(sheet, path)
+        for family in tags["families"]:
+            by_family[family] = by_family.get(family, 0) + 1
+        for kind in tags["kinds"]:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        shared_core += tags["shared_core"]
+        if tags["unmapped"]:
+            unmapped.append(path)
+    report = {"total": len(paths), "by_family": dict(sorted(by_family.items())),
+              "by_kind": dict(sorted(by_kind.items())), "shared_core": shared_core, "unmapped": unmapped}
+    print(json.dumps(report, indent=2))
+    return 1 if unmapped else 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        args.func(args)
+        code = args.func(args)
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"risk-pr: {exc}", file=sys.stderr)
         return 1
-    return 0
+    return code or 0

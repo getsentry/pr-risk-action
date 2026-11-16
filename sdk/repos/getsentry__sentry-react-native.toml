@@ -1,0 +1,53 @@
+# getsentry/sentry-react-native 59628292fe85b719a4d66dfe1359aa614e9bc1c8
+
+[[area]]
+paths = ["packages/core/**"]
+families = ["hybrid"]
+
+[[area]]
+paths = [
+  "packages/expo-upload-sourcemaps/**", "packages/core/metro.*", "packages/core/expo.*",
+  "packages/core/app.plugin.js", "packages/core/sentry.gradle*", "packages/core/scripts/**",
+  "packages/core/plugin/**",
+]
+families = ["tooling", "hybrid"]
+
+[[kind]]
+paths = ["packages/core/etc/**"]
+kind = "public-api-record"
+
+[[kind]]
+paths = [
+  "**/RNSentry.podspec", "packages/core/android/build.gradle", "packages/core/Package.swift",
+  "SDK-VERSIONS.md", ".yarn/**", "packages/core/android/libs/**",
+]
+kind = "dependencies"
+
+[[kind]]
+paths = [
+  "packages/core/test/**", "packages/core/RNSentryAndroidTester/**",
+  "packages/core/RNSentryCocoaTester/**", "dev-packages/**", "**/src/test/**", "**/jest.config*.js",
+  "packages/core/typings/jest-*.d.ts",
+]
+kind = "tests"
+
+[[kind]]
+paths = ["samples/**"]
+kind = "samples"
+
+[[kind]]
+paths = [
+  "scripts/**", "packages/*/scripts/**", "packages/core/sentry.gradle*", "**/*.gradle",
+  "**/*.gradle.kts", "**/gradle/**", "**/gradlew", "**/gradlew.bat", "**/gradle.properties",
+  "**/*.xcodeproj/**", "**/tsconfig*.json", "packages/core/api-extractor.json",
+  "packages/core/babel.config.js", "packages/core/.npmignore", "lerna.json", ".yarnrc.yml",
+  ".ruby-version",
+]
+kind = "build-release"
+
+[[kind]]
+paths = [
+  ".oxfmtrc.json", "**/.oxlintrc.json", "**/.clang-format", "**/.swiftlint.yml", "agents.toml",
+  "warden.toml",
+]
+kind = "dev-tooling"

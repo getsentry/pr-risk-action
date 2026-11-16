@@ -110,3 +110,92 @@ class ShippedSheetsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealSheetSpotCheckTest(unittest.TestCase):
+    """Spot checks against the shipped sheets, at the commits recorded in each sheet."""
+
+    def tags(self, repo, path):
+        return tag_path(load_fact_sheet(f"getsentry/{repo}"), path)
+
+    def assert_families(self, repo, path, families, shared_core=False):
+        tags = self.tags(repo, path)
+        self.assertEqual(tags["families"], families, path)
+        self.assertEqual(tags["shared_core"], shared_core, path)
+        self.assertFalse(tags["unmapped"], path)
+
+    def assert_has_kind(self, repo, path, kind):
+        self.assertIn(kind, self.tags(repo, path)["kinds"], path)
+
+    def assert_tests_only(self, repo, path):
+        self.assertEqual(self.tags(repo, path),
+                         {"families": [], "shared_core": False, "kinds": ["tests"], "unmapped": False})
+
+    def test_sentry_java(self):
+        self.assert_families("sentry-java", "sentry/src/main/java/io/sentry/Sentry.java",
+                             ["mobile-native", "server"], shared_core=True)
+        self.assert_families("sentry-java", "sentry-android-core/src/main/java/io/sentry/android/core/X.java",
+                             ["mobile-native"])
+        self.assert_families("sentry-java", "sentry-servlet/src/main/java/io/sentry/servlet/X.java", ["server"])
+        self.assert_has_kind("sentry-java", "sentry/api/sentry.api", "public-api-record")
+        self.assert_has_kind("sentry-java", "sentry-compose/api/android/sentry-compose.api", "public-api-record")
+        self.assert_has_kind("sentry-java", "sentry-servlet/build.gradle.kts", "build-release")
+        self.assert_has_kind("sentry-java", "gradle/libs.versions.toml", "dependencies")
+        self.assert_tests_only("sentry-java", "sentry-servlet/src/test/kotlin/X.kt")
+        test_support = self.tags("sentry-java", "sentry-test-support/src/main/kotlin/io/sentry/test/X.kt")
+        self.assertEqual(test_support["kinds"], [])
+        self.assertTrue(test_support["families"])
+
+    def test_sentry_java_6625_fires_r5_and_r6(self):
+        from risk_pr_agent.sdk_rules import evaluate_rules
+
+        sheet = load_fact_sheet("getsentry/sentry-java")
+        paths = ["gradle/libs.versions.toml", "sentry-servlet/build.gradle.kts",
+                 "sentry-servlet/src/test/kotlin/io/sentry/servlet/SentryServletRequestListenerTest.kt"]
+        row = {"risk_label": "low", "probabilities": {"low": 0.99}, "context_stage": "bounded_diff",
+               "diff_truncated": False, "omitted": [],
+               "sdk": {"files": [{"path": path, **tag_path(sheet, path)} for path in paths]}}
+        fired = {entry["rule"]: entry["files"] for entry in evaluate_rules(row)}
+        self.assertEqual(set(fired), {"R5", "R6"})
+        self.assertEqual(fired["R5"], ["gradle/libs.versions.toml"])
+        self.assertIn("sentry-servlet/build.gradle.kts", fired["R6"])
+
+    def test_sentry_javascript(self):
+        self.assert_families("sentry-javascript", "packages/core/src/index.ts", ["browser", "server"], shared_core=True)
+        self.assert_families("sentry-javascript", "packages/nextjs/src/index.types.ts", ["browser", "server"])
+        self.assert_families("sentry-javascript", "packages/browser/src/index.ts", ["browser"])
+        self.assert_families("sentry-javascript", "packages/node/src/index.ts", ["server"])
+        self.assert_families("sentry-javascript", "packages/vite-plugin/src/index.ts", ["tooling"])
+        self.assert_has_kind("sentry-javascript", "packages/browser/package.json", "dependencies")
+        self.assert_has_kind("sentry-javascript", "dev-packages/rollup-utils/npmHelpers.mjs", "build-release")
+        self.assert_tests_only("sentry-javascript", "packages/core/test/lib/x.test.ts")
+
+    def test_sentry_python(self):
+        self.assert_families("sentry-python", "sentry_sdk/integrations/django/__init__.py", ["server"])
+        self.assert_families("sentry-python", "sentry_sdk/client.py", ["server"], shared_core=True)
+        self.assert_tests_only("sentry-python", "tests/test_client.py")
+
+    def test_sentry_dotnet(self):
+        self.assert_has_kind("sentry-dotnet", "modules/sentry-cocoa", "dependencies")
+        self.assertIn("hybrid", self.tags("sentry-dotnet", "src/Sentry.Maui/SentryMauiAppBuilderExtensions.cs")["families"])
+        self.assertEqual(self.tags("sentry-dotnet", "src/Sentry/SentrySdk.cs")["shared_core"], True)
+        self.assert_families("sentry-dotnet", "src/Sentry.AspNetCore/SentryMiddleware.cs", ["server"])
+        self.assert_has_kind("sentry-dotnet", "test/Sentry.Tests/ApiApprovalTests.Run.DotNet8_0.verified.txt",
+                             "public-api-record")
+
+    def test_sentry_cocoa(self):
+        self.assert_families("sentry-cocoa", "Sources/Swift/Helper/SentrySDK.swift", ["mobile-native"])
+        for record in ("sdk_api.json", "sdk_api_objc.json", "sdk_api_v10.json", "sdk_api_sentryswiftui.json"):
+            self.assert_has_kind("sentry-cocoa", record, "public-api-record")
+        self.assert_has_kind("sentry-cocoa", "Package.swift", "build-release")
+        self.assert_has_kind("sentry-cocoa", "Sources/SentryCrash/Recording/SentryCrashC.c", "dependencies")
+        self.assert_tests_only("sentry-cocoa", "Tests/SentryTests/SentrySDKTests.swift")
+
+    def test_sentry_react_native(self):
+        self.assertIn("hybrid", self.tags("sentry-react-native", "packages/core/src/js/index.ts")["families"])
+        self.assertIn("hybrid", self.tags("sentry-react-native", "packages/core/ios/RNSentry.mm")["families"])
+        self.assertEqual(self.tags("sentry-react-native", "packages/core/metro.js")["families"], ["hybrid", "tooling"])
+        self.assert_has_kind("sentry-react-native", "packages/core/RNSentry.podspec", "dependencies")
+        self.assert_has_kind("sentry-react-native", "packages/core/android/build.gradle", "dependencies")
+        self.assert_has_kind("sentry-react-native", "packages/core/etc/sentry-react-native.api.md", "public-api-record")
+        self.assert_tests_only("sentry-react-native", "packages/core/test/x.test.ts")
