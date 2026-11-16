@@ -65,6 +65,28 @@ class ActionRunnerTests(unittest.TestCase):
         client.assert_not_called()
         fetch.assert_not_called()
 
+    def test_summary_output_block_is_delimited_safely(self):
+        result = {**classification(), "status": "ok", "risk_label": "medium"}
+        out = self.directory / "output"
+        out.write_text("")
+        action_runner._publish(result, "result.json")
+        text = out.read_text()
+        head, rest = text.split("summary<<", 1)
+        delim, rest = rest.split("\n", 1)
+        body, tail = rest.split("\n" + delim + "\n", 1)
+        self.assertEqual(body + "\n", commands.risk_summary(result) + "\nJev candidate result; this check does not authorize merging.\n")
+        self.assertNotIn(delim, body)
+        self.assertIn("risk_label=medium", text)
+        self.assertIn("status=ok", text)
+
+    def test_summary_output_regenerates_a_colliding_delimiter(self):
+        result = {**classification(), "status": "ok"}
+        out = self.directory / "output"
+        out.write_text("")
+        with patch.object(action_runner.secrets, "token_hex", side_effect=["Status", "f" * 32]):
+            action_runner._publish(result, "result.json")
+        self.assertIn("summary<<" + "f" * 32 + "\n", out.read_text())
+
     def test_untrusted_inputs_are_rejected_before_network(self):
         cases = [("example/project;echo injected", "7", "", "invalid_repository"),
                  ("example/..", "7", "", "invalid_repository"),

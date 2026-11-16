@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -95,6 +96,10 @@ def _publish(result: Dict[str, Any], result_path: str) -> None:
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
             handle.write(f"risk_label={result.get('risk_label') or ''}\nstatus={result['status']}\n")
+            delimiter = secrets.token_hex(16)
+            while delimiter in summary:
+                delimiter = secrets.token_hex(16)
+            handle.write(f"summary<<{delimiter}\n{summary.rstrip(chr(10))}\n{delimiter}\n")
     print(summary)
 
 

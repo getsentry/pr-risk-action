@@ -24,6 +24,9 @@ outputs:
   status:
     description: Classification status, including explicit unclassified failures.
     value: ${{ steps.score.outputs.status }}
+  summary:
+    description: Markdown summary of the result, the same text as the job summary.
+    value: ${{ steps.score.outputs.summary }}
 
 runs:
   using: composite

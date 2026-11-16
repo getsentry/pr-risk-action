@@ -10,8 +10,9 @@ import argparse
 import json
 import os
 import sys
+import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from . import cli as collection
 from .features import load_raw_dataset
@@ -239,6 +240,8 @@ def _score(rows, args, out_dir):
             if args.input_profile:
                 results[-1].update(input_profile=args.input_profile, configuration=prepared["configuration"],
                                    request_bytes=prepared.get("request_bytes"), request=prepared.get("request"))
+                if "sdk" in prepared:
+                    results[-1]["sdk"] = prepared["sdk"]
                 if "context_stage" in prepared:
                     results[-1]["context_stage"] = prepared["context_stage"]
                 for key in ("context_budget", "estimated_input_tokens", "diff_truncated"):
@@ -299,6 +302,61 @@ def cmd_build(args) -> None:
     print(f"Prepared and processed {len(rows)} PRs in {args.out}")
 
 
+_RULE_TEXT = {
+    "R1": "code was truncated, omitted or a reduced context was used",
+    "R2": "a binary file's content was not inspected",
+    "R3": "a changed path is not covered by the repository's fact sheet",
+    "R4": "a public API record changed",
+    "R5": "dependencies or bundled SDK versions changed",
+    "R6": "build or release configuration changed",
+    "R7": "the model's probability for low was under {threshold:.2f}",
+}
+_MECHANISM_NAMES = {
+    "m_stability": "host stability", "m_performance": "host performance", "m_contract": "public contract",
+    "m_data": "data sent", "m_inherited": "inherited by customers", "m_reach": "reach",
+    "m_ships": "ships to customers",
+}
+_SDK_FIELDS = ("sdk", "model_label", "low_blocked_by", "mechanisms")
+_SHOWN_PATHS = 5
+
+
+def _code_span(path: Any) -> str:
+    """Render an untrusted path inertly: no backticks, control or line-break characters, bounded length."""
+    text = "".join(ch for ch in str(path) if ch != "`" and unicodedata.category(ch) not in ("Cc", "Cf", "Cs", "Zl", "Zp"))
+    return f"`{text[:200]}`"
+
+
+def _sdk_summary_lines(result: Dict[str, Any]) -> List[str]:
+    from .sdk_rules import LOW_PROBABILITY_THRESHOLD
+    lines: List[str] = []
+    blocked = result.get("low_blocked_by") or []
+    model_label = result.get("model_label")
+    if model_label:
+        lines.append(f"Model label: `{model_label}`")
+        if result.get("risk_label") and result["risk_label"] != model_label:
+            rules = ", ".join(str(item.get("rule")) for item in blocked)
+            lines.append(f"Raised from {model_label} to {result['risk_label']}" + (f" by: {rules}." if rules else "."))
+    families = (result.get("sdk") or {}).get("families_touched")
+    if families is not None:
+        lines.append("Families touched: " + (", ".join(str(family) for family in families) or "none"))
+    for item in blocked:
+        rule = str(item.get("rule"))
+        text = _RULE_TEXT.get(rule, "").format(threshold=LOW_PROBABILITY_THRESHOLD)
+        files = item.get("files") or []
+        line = f"- {rule}: {text}" if text else f"- {rule}"
+        if files:
+            line += ": " + ", ".join(_code_span(path) for path in files[:_SHOWN_PATHS])
+            if len(files) > _SHOWN_PATHS:
+                line += f" and {len(files) - _SHOWN_PATHS} more"
+        lines.append(line)
+    mechanisms = result.get("mechanisms")
+    if mechanisms:
+        ranked = sorted(mechanisms.items(), key=lambda pair: -pair[1])
+        lines.append("Mechanisms: " + ", ".join(
+            f"{_MECHANISM_NAMES.get(key, key)}={value:.2f}" for key, value in ranked))
+    return lines
+
+
 def risk_summary(result: Dict[str, Any]) -> str:
     lines = ["# PR risk", "", f"Status: `{result.get('status')}`",
              f"Risk: `{result.get('risk_label') or 'not classified'}`",
@@ -310,6 +368,8 @@ def risk_summary(result: Dict[str, Any]) -> str:
     if result.get("estimated_input_tokens") is not None:
         lines.append(f"Estimated input tokens: {result['estimated_input_tokens']} (proxy tokenizer, not Jev's measured usage).")
     lines += ["", "Class probabilities describe the risk rubric, not incident likelihood."]
+    if any(key in result for key in _SDK_FIELDS):
+        lines += _sdk_summary_lines(result)
     return "\n".join(lines) + "\n"
 
 
