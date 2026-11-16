@@ -16,6 +16,10 @@ inputs:
     description: JSON result path, relative to the workspace unless absolute.
     required: false
     default: risk-pr-result.json
+  publish-label:
+    description: When "true", the Action replaces the PR's risk label itself (needs pull-requests write). Any other value makes no write call.
+    required: false
+    default: "false"
 
 outputs:
   risk-label:
@@ -27,6 +31,9 @@ outputs:
   summary:
     description: Markdown summary of the result, the same text as the job summary.
     value: ${{ steps.score.outputs.summary }}
+  label-published:
+    description: "true only when publish-label is on and the risk label was added to the unchanged PR."
+    value: ${{ steps.score.outputs.label_published }}
 
 runs:
   using: composite
@@ -72,5 +79,6 @@ runs:
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
         INPUT_EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
         INPUT_RESULT_PATH: ${{ inputs.result-path }}
+        INPUT_PUBLISH_LABEL: ${{ inputs.publish-label }}
         TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/pr-risk-action-tiktoken
       run: PYTHONPATH="$GITHUB_ACTION_PATH/src" python -m risk_pr_agent.action_runner

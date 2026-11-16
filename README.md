@@ -2,7 +2,7 @@
 
 Classify a pull request as `low`, `medium` or `high` with Typesafe AI Jev through Vercel AI Gateway. Outside SDK mode (see [SDK repositories](#sdk-repositories)), each request includes the PR title and description, changed paths/status, additions/deletions per file and in total, and Git diffs within the context budget. Inference does not need historical PRs or a trained model.
 
-This is an advisory evaluation candidate. It does not authorize merging, replace existing checks, apply labels, or change branch protection. Probabilities describe the risk classes, not incident likelihood.
+This is an advisory evaluation candidate. It does not authorize merging, replace existing checks, or change branch protection, and it applies labels only when `publish-label` is `true` (see [Publishing the risk label](#publishing-the-risk-label)). Probabilities describe the risk classes, not incident likelihood.
 
 ## Usage
 
@@ -48,13 +48,40 @@ jobs:
           retention-days: 30
 ```
 
-No target checkout or target dependency installation is needed. The Action loads its trusted Python source through `PYTHONPATH`, installs the trusted Python dependencies (`tiktoken==0.14.0`) and Node worker dependencies (AI SDK `7.0.106`), preloads the token estimator without the Gateway key, downloads Git objects into an isolated bare repository and reads the exact base/head revisions. PR files are never executed. Git downloads do not receive the Gateway key or GitHub token. This initial integration supports public GitHub repositories, including PRs from forks.
+No target checkout or target dependency installation is needed. The Action loads its trusted Python source through `PYTHONPATH`, installs the trusted Python dependencies (`tiktoken==0.14.0`) and Node worker dependencies (AI SDK `7.0.106`), preloads the token estimator without the Gateway key, downloads Git objects into an isolated bare repository and reads the exact base/head revisions. PR files are never executed. Git downloads do not receive the Gateway key or GitHub token; with `publish-label: true` the scoring process does not receive the GitHub token either. This initial integration supports public GitHub repositories, including PRs from forks.
 
 The Action verifies that the PR has not moved before publishing a classification. A moved PR is reported as unclassified. `expected-head-sha` binds automatic runs to their triggering revision; leave it empty for a manual run against the current PR.
 
+Inputs: `repo`, `pr-number`, `expected-head-sha`, `result-path` (default `risk-pr-result.json`) and `publish-label` (default `false`).
+
+### Publishing the risk label
+
+With `publish-label: true` the Action owns the PR's `risk: low`, `risk: medium` and `risk: high` labels, and the caller workflow needs `pull-requests: write`. With the default (`false`) the Action makes no write call to GitHub and the read-only permissions shown above are enough.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+# ...same trigger, concurrency and job as above...
+      - name: Classify PR risk
+        uses: getsentry/pr-risk-action@<reviewed-jev-commit-sha>
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+        with:
+          repo: ${{ github.repository }}
+          pr-number: ${{ github.event.pull_request.number }}
+          expected-head-sha: ${{ github.event.pull_request.head.sha }}
+          publish-label: true
+```
+
+Every run first removes all three risk labels, before scoring. It adds the final `risk-label` (never the model label) only when the result is `ok` and the PR is still open at the scored base and head, and checks again after adding. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. See [Label publishing](jev-risk-classification.md#label-publishing).
+
+**Replacing a label script in the caller workflow.** Delete the caller's own label step and set `publish-label: true`. The Action clears the old label at the start of every run, so a label on a PR always belongs to the revision that was scored. Anyone with triage rights can still add a risk label by hand, so automation that acts on `low` must read the check's result for the exact head commit rather than trust the label.
+
 ## Result
 
-The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label`, `status` and `summary` outputs. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
+The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label`, `status`, `summary` and `label-published` outputs. `label-published` is `true` only when the Action added the risk label to the unchanged PR, and `false` otherwise, including when `publish-label` is off. With `publish-label: true` the JSON also carries `label_published`. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
 
 Binary and non-UTF-8 changes are supported, including PRs containing only binaries. Jev receives paths, change status, Git headers, and the size and SHA-256 of each available side. Binary bytes and encoded Git payloads are excluded; readable text sides of text/binary conversions share the code context budget. The request and JSON result identify the binary sides whose contents were not inspected. Binary presence alone does not impose a risk class.
 
@@ -72,7 +99,7 @@ In SDK mode, read `risk-label` (or `risk_label` in the JSON), not any other labe
 
 SDK mode applies to the default `metadata-diff` input profile, which is what the Action uses. Other experimental input profiles and legacy variants ignore fact sheets.
 
-The `summary` output holds the same Markdown as the job summary. To post it as a PR comment, pass it through an environment variable and never put `${{ }}` inside a `run:` script, because the summary contains text derived from an untrusted pull request. This needs `pull-requests: write` in the caller workflow, which the Action itself does not need.
+The `summary` output holds the same Markdown as the job summary. To post it as a PR comment, pass it through an environment variable and never put `${{ }}` inside a `run:` script, because the summary contains text derived from an untrusted pull request. This needs `pull-requests: write` in the caller workflow, which the Action itself needs only with `publish-label: true`.
 
 ```yaml
       - name: Comment risk summary

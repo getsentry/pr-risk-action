@@ -93,6 +93,19 @@ Never give a non-shipping kind (`tests`, `samples`, `docs`, `dev-tooling`) to so
 
 Changing the wording in `sdk/rubric.toml` needs a bump of its `version`, so SDK requests never share a cache entry with an older rubric. Changes under `sdk/` and the `sdk_*.py` modules change what every SDK repository's label means and deserve owner review.
 
+## Label publishing
+
+With the Action input `publish-label: true`, the Action applies the labels `risk: low`, `risk: medium` and `risk: high` (colours `0E8A16`, `FBCA04`, `B60205`; description `PR risk score: <class>`). With any other value it makes no write call to GitHub. In order:
+
+1. After validating the repository and PR number and confirming credentials, and before scoring, remove all three risk labels from the PR. If that fails, the run ends `label_error` without scoring, because the old label may still be there.
+2. Score as usual. The scoring process does not receive the GitHub token.
+3. Only when the status is `ok`: re-read the PR; if it is closed or its base or head differs from the scored revision, add nothing and report `pr_changed`. Otherwise create the repository label if missing (a concurrent creation is fine), add the final `risk_label` (never `model_label`), and re-read the PR again; if it moved or closed, remove the label and report `pr_changed`.
+4. Any failure in step 3 removes the label if it may have been added and reports `label_error`.
+
+`label_error` and `pr_changed` carry no label and no model verdict, like every non-`ok` status, and fail the job. Since step 1 runs first, a PR whose run did not finish step 3 carries no risk label. The result field `label_published` (present only with the input on) and the output `label-published` are `true` only when step 3 completed.
+
+Write requests go only to the label endpoints of the repository and PR number given as inputs, with label names taken from the constants above. Anyone with triage rights can still add a risk label by hand, so automation that acts on `low` must read the check's result for the exact head commit rather than trust the label.
+
 ## Evidence sent to Jev
 
 Outside SDK mode, the default `metadata-diff` profile sends the PR title/description, changed paths/status (including previous paths for renames), additions/deletions per file and totals, and text diffs within the context budget. `score`, `build`, `score-pr` and the Python request/scoring APIs resolve omitted context options to this same input. Omitted and explicit profile options have the same request and cache identity at the current versions; context 7/rubric 4 intentionally invalidate the earlier evaluation cache. Selecting this input does not count as a passed holdout evaluation.

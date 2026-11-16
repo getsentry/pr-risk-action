@@ -10,8 +10,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from risk_pr_agent import action_runner, commands
+from risk_pr_agent import action_runner, commands, labels
 from risk_pr_agent.github import GitHubError, RepoRef
+from test_labels import ENCODED, FakeGitHub, ISSUE_LABELS, REPO_LABELS
 
 
 BASE = "a" * 40
@@ -39,7 +40,7 @@ def sdk_result_fields():
                     "shared_core": False, "files": []}}
 
 
-class ActionRunnerTests(unittest.TestCase):
+class RunnerTestCase(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -53,12 +54,21 @@ class ActionRunnerTests(unittest.TestCase):
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
-    def invoke(self, repo="example/project", number="7", expected=""):
+    def invoke(self, repo="example/project", number="7", expected="", **options):
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
-            code = action_runner.run_action(repo, number, "result.json", expected)
+            code = action_runner.run_action(repo, number, "result.json", expected, **options)
         return code, json.loads((self.directory / "result.json").read_text()), stream.getvalue()
 
+    def assert_no_model_verdict(self, result):
+        for key in ("model_label", "low_blocked_by", "mechanisms"):
+            self.assertNotIn(key, result)
+        for text in ((self.directory / "summary").read_text(), (self.directory / "output").read_text()):
+            for line in ("Model label", "Rules that block low", "Raised from", "- R4", "Mechanisms:"):
+                self.assertNotIn(line, text)
+
+
+class ActionRunnerTests(RunnerTestCase):
     def test_missing_key_fails_without_network_or_git_or_loading_caller_env(self):
         (self.directory / ".env").write_text("AI_GATEWAY_API_KEY=untrusted-env-key\n")
         with patch.dict(os.environ, {"AI_GATEWAY_API_KEY": ""}), \
@@ -146,13 +156,6 @@ class ActionRunnerTests(unittest.TestCase):
                 self.assertNotIn("Risk: `low`", (self.directory / "summary").read_text())
                 self.assertNotIn("risk_label=low", (self.directory / "output").read_text())
                 self.assert_no_model_verdict(result)
-
-    def assert_no_model_verdict(self, result):
-        for key in ("model_label", "low_blocked_by", "mechanisms"):
-            self.assertNotIn(key, result)
-        for text in ((self.directory / "summary").read_text(), (self.directory / "output").read_text()):
-            for line in ("Model label", "Rules that block low", "Raised from", "- R4", "Mechanisms:"):
-                self.assertNotIn(line, text)
 
     def test_rejected_sdk_result_publishes_no_model_verdict(self):
         cases = [("invalid_result", {"risk_label": "critical"}),
@@ -351,6 +354,192 @@ class ActionRunnerTests(unittest.TestCase):
         self.assertFalse((source / "OWNED").exists())
         self.assertTrue(temporary_paths)
         self.assertTrue(all(not path.exists() for path in temporary_paths))
+
+
+class LabelPublishingTests(RunnerTestCase):
+    def run_enabled(self, fake, scored=None, responses=None, events=None):
+        events = fake.events if events is None else events
+        scored = classification() if scored is None else scored
+
+        def score(*args, **kwargs):
+            events.append(("score",))
+            return copy.deepcopy(scored)
+
+        prs = responses or [pull_request()] * 4
+        with patch.object(labels, "default_transport", return_value=fake), \
+                patch.object(labels.time, "sleep"), \
+                patch.object(action_runner.GitHubClient, "get_pull_request", side_effect=prs), \
+                patch.object(action_runner, "_fetch_git") as fetch, \
+                patch.object(action_runner, "_run_scorer", side_effect=score) as scorer:
+            code, result, _ = self.invoke(publish_label=True)
+        return code, result, (self.directory / "output").read_text(), fetch, scorer
+
+    def test_disabled_makes_no_write_and_keeps_result_and_outputs(self):
+        with patch.object(labels, "default_transport") as transport, \
+                patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
+                patch.object(action_runner, "_fetch_git"), \
+                patch.object(action_runner, "_run_scorer", return_value=classification()) as scorer:
+            code, result, _ = self.invoke(expected=HEAD)
+        self.assertEqual(code, 0)
+        self.assertEqual(result, classification())
+        transport.assert_not_called()
+        self.assertTrue(scorer.call_args.kwargs.get("share_github_token", True))
+        output = (self.directory / "output").read_text()
+        self.assertTrue(output.startswith("risk_label=low\nstatus=ok\nsummary<<"))
+        self.assertTrue(output.endswith("\nlabel_published=false\n"))
+
+    def test_disabled_early_exit_writes_label_published_false_only_to_outputs(self):
+        with patch.dict(os.environ, {"AI_GATEWAY_API_KEY": ""}), \
+                patch.object(labels, "default_transport") as transport:
+            code, result, _ = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertNotIn("label_published", result)
+        transport.assert_not_called()
+        self.assertIn("label_published=false\n", (self.directory / "output").read_text())
+
+    def test_enabled_early_exit_touches_no_label(self):
+        with patch.dict(os.environ, {"AI_GATEWAY_API_KEY": ""}), \
+                patch.object(labels, "default_transport") as transport:
+            code, result, _ = self.invoke(publish_label=True)
+        self.assertEqual((code, result["status"], result["label_published"]), (1, "missing_credentials", False))
+        transport.assert_not_called()
+
+    def test_old_labels_are_cleared_before_scoring_then_final_label_added(self):
+        fake = FakeGitHub(pr_labels={"risk: low", "risk: high", "bug"})
+        scored = classification()
+        scored["risk_label"] = "medium"
+        code, result, output, _, scorer = self.run_enabled(fake, scored)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.events, [("removed", "risk: low"), ("removed", "risk: high"), ("score",),
+                                       ("added", "risk: medium")])
+        self.assertEqual(fake.pr_labels, {"bug", "risk: medium"})
+        self.assertIs(result["label_published"], True)
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("risk_label=medium\n", output)
+        self.assertTrue(output.endswith("\nlabel_published=true\n"))
+        self.assertFalse(scorer.call_args.kwargs["share_github_token"])
+        allowed = {ISSUE_LABELS, REPO_LABELS} | {f"{ISSUE_LABELS}/{value}" for value in ENCODED.values()} | {
+            f"{REPO_LABELS}/{value}" for value in ENCODED.values()}
+        for _, url, _ in fake.calls:
+            self.assertIn(url, allowed)
+
+    def test_missing_repository_label_is_created_and_concurrent_creation_tolerated(self):
+        for concurrent in (False, True):
+            with self.subTest(concurrent=concurrent):
+                fake = FakeGitHub(repo_labels=())
+                if concurrent:
+                    fake.fail = lambda method, url, body: 422 if (method, url) == ("POST", REPO_LABELS) else None
+                code, result, _, _, _ = self.run_enabled(fake)
+                self.assertEqual((code, result["status"], result["label_published"]), (0, "ok", True))
+                self.assertIn(("POST", REPO_LABELS, {"name": "risk: low", "color": "0E8A16",
+                                                     "description": "PR risk score: low"}), fake.calls)
+                self.assertEqual(fake.pr_labels, {"risk: low"})
+
+    def test_failed_clearing_stops_before_scoring(self):
+        fake = FakeGitHub(pr_labels={"risk: low"},
+                          fail=lambda method, url, body: 403 if method == "DELETE" else None)
+        code, result, output, fetch, scorer = self.run_enabled(fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "label_error")
+        self.assertIsNone(result["risk_label"])
+        self.assertIs(result["label_published"], False)
+        scorer.assert_not_called()
+        fetch.assert_not_called()
+        self.assertIn("risk_label=\nstatus=label_error\n", output)
+
+    def test_unclassified_result_leaves_the_pr_without_a_risk_label(self):
+        scored = classification()
+        scored.update(sdk_result_fields(), status="invalid_fact_sheet", risk_label=None, probabilities=None)
+        fake = FakeGitHub(pr_labels={"risk: low"})
+        code, result, _, _, _ = self.run_enabled(fake, scored)
+        self.assertEqual((code, result["status"], result["label_published"]), (1, "invalid_fact_sheet", False))
+        self.assertEqual(fake.pr_labels, set())
+        self.assertNotIn("POST", [method for method, _, _ in fake.calls])
+
+    def test_pr_moved_or_closed_before_publishing_adds_nothing(self):
+        closed = pull_request()
+        closed["state"] = "closed"
+        for name, moved in (("head", pull_request(head="d" * 40)), ("base", pull_request(base="e" * 40)),
+                            ("closed", closed)):
+            with self.subTest(name=name):
+                scored = classification()
+                scored.update(sdk_result_fields())
+                fake = FakeGitHub()
+                for path in ("summary", "output"):
+                    (self.directory / path).write_text("")
+                code, result, output, _, _ = self.run_enabled(fake, scored, [pull_request(), pull_request(), moved])
+                self.assertEqual(code, 1)
+                self.assertEqual(result["status"], "pr_changed")
+                self.assertIsNone(result["risk_label"])
+                self.assertIsNone(result["probabilities"])
+                self.assertIs(result["label_published"], False)
+                self.assertEqual(fake.calls, [("DELETE", f"{ISSUE_LABELS}/{ENCODED[level]}", None)
+                                              for level in ("low", "medium", "high")])
+                self.assert_no_model_verdict(result)
+
+    def test_pr_moved_after_adding_removes_the_added_label(self):
+        fake = FakeGitHub()
+        code, result, output, _, _ = self.run_enabled(
+            fake, responses=[pull_request(), pull_request(), pull_request(), pull_request(head="d" * 40)])
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "pr_changed")
+        self.assertIs(result["label_published"], False)
+        self.assertEqual(fake.events[-2:], [("added", "risk: low"), ("removed", "risk: low")])
+        self.assertEqual(fake.pr_labels, set())
+        self.assertIn("risk_label=\n", output)
+
+    def test_forbidden_add_reports_label_error_after_attempting_removal(self):
+        fake = FakeGitHub(fail=lambda method, url, body: 403 if (method, url) == ("POST", ISSUE_LABELS) else None)
+        code, result, output, _, _ = self.run_enabled(fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "label_error")
+        self.assertIsNone(result["risk_label"])
+        self.assertIs(result["label_published"], False)
+        self.assertEqual(fake.calls[-1], ("DELETE", f"{ISSUE_LABELS}/{ENCODED['low']}", None))
+        self.assertIn("risk_label=\nstatus=label_error\n", output)
+        self.assertNotIn("risk_label=low", output)
+
+    def test_failed_publish_reread_reports_label_error(self):
+        fake = FakeGitHub()
+        code, result, _, _, _ = self.run_enabled(
+            fake, responses=[pull_request(), pull_request(), GitHubError("PRIVATE_MARKER github-test-key")])
+        self.assertEqual((code, result["status"], result["label_published"]), (1, "label_error", False))
+        self.assertNotIn("PRIVATE_MARKER", json.dumps(result))
+
+    def test_published_label_is_the_final_label_not_the_model_label(self):
+        scored = classification()
+        scored.update(sdk_result_fields(), risk_label="medium")
+        fake = FakeGitHub()
+        code, result, _, _, _ = self.run_enabled(fake, scored)
+        self.assertEqual((code, result["model_label"], result["risk_label"]), (0, "low", "medium"))
+        self.assertEqual(fake.pr_labels, {"risk: medium"})
+
+    def test_publish_label_input_must_be_exactly_true(self):
+        for value, enabled in (("true", True), ("false", False), ("", False), ("True", False), ("yes", False)):
+            with self.subTest(value=value), \
+                    patch.dict(os.environ, {"INPUT_PUBLISH_LABEL": value, "INPUT_REPO": "example/project",
+                                            "INPUT_PR_NUMBER": "7"}), \
+                    patch.object(action_runner, "run_action", return_value=0) as run:
+                action_runner.main()
+            self.assertEqual(run.call_args.kwargs["publish_label"], enabled)
+
+    def test_scorer_receives_github_token_only_when_publishing_is_off(self):
+        child = self.directory / "child"
+        child.mkdir()
+        seen = []
+
+        def run(args, **kwargs):
+            seen.append(kwargs["env"])
+            Path(args[args.index("--out") + 1]).write_text(json.dumps(classification()))
+
+        with patch.dict(os.environ, {"GH_TOKEN": "gh-test-key"}), \
+                patch.object(action_runner.subprocess, "run", side_effect=run):
+            action_runner._run_scorer(RepoRef.parse("example/project"), 7, child)
+            action_runner._run_scorer(RepoRef.parse("example/project"), 7, child, share_github_token=False)
+        self.assertEqual(seen[0]["GITHUB_TOKEN"], "github-test-key")
+        for key in ("GITHUB_TOKEN", "GH_TOKEN"):
+            self.assertNotIn(key, seen[1])
+        self.assertEqual(seen[1]["AI_GATEWAY_API_KEY"], "gateway-test-key")
 
 
 if __name__ == "__main__":

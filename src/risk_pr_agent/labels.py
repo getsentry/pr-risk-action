@@ -1,0 +1,139 @@
+"""Publish the risk label on a pull request; the only code that writes to GitHub.
+
+Write requests go only to the label endpoints of the repository and PR number the
+action was given. Label names come only from ``RISK_LABELS``. Response bodies and
+the token are never logged or put into errors.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import http.client
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Callable, Dict, Optional
+
+from .github import GITHUB_API, RepoRef
+
+
+# Risk class -> (label name, colour). The description is "PR risk score: <class>".
+RISK_LABELS = {"low": ("risk: low", "0E8A16"), "medium": ("risk: medium", "FBCA04"),
+               "high": ("risk: high", "B60205")}
+_ATTEMPTS = 3
+
+# (method, url, json body or None) -> HTTP status. Network failures report a 5xx status.
+Transport = Callable[[str, str, Optional[Dict[str, Any]]], int]
+
+
+class LabelError(RuntimeError):
+    """A label request failed; the message never contains response bodies."""
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # A redirect would resend the Authorization header to wherever it points.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def default_transport() -> Transport:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        raise LabelError("no GitHub token for label requests")
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "risk-pr-agent/0.1",
+               "X-GitHub-Api-Version": "2022-11-28", "Authorization": f"Bearer {token}"}
+
+    def send(method: str, url: str, body: Optional[Dict[str, Any]]) -> int:
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        request = urllib.request.Request(url, data=data, method=method,
+                                         headers={**headers, **({"Content-Type": "application/json"} if data else {})})
+        try:
+            with _OPENER.open(request, timeout=30) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            error.close()
+            return error.code
+        except (urllib.error.URLError, socket.timeout, TimeoutError,
+                http.client.HTTPException, ConnectionError):
+            return 599
+
+    return send
+
+
+class RiskLabels:
+    """The three risk labels on one pull request."""
+
+    def __init__(self, repo: RepoRef, number: int, transport: Optional[Transport] = None,
+                 sleep: Optional[Callable[[float], None]] = None) -> None:
+        owner, name = (urllib.parse.quote(part, safe="") for part in (repo.owner, repo.name))
+        self._repo_labels = f"{GITHUB_API}/repos/{owner}/{name}/labels"
+        self._issue_labels = f"{GITHUB_API}/repos/{owner}/{name}/issues/{int(number)}/labels"
+        self._transport = transport
+        self._sleep = sleep or time.sleep
+
+    def clear(self) -> None:
+        """Remove every risk label from the PR; raise LabelError if any removal fails."""
+        for level in RISK_LABELS:
+            self._remove(level)
+
+    def publish(self, level: str, is_current: Callable[[], bool]) -> bool:
+        """Add the label for ``level`` if the PR still is the scored revision.
+
+        Returns True when the label is on the PR and the PR was unchanged after it
+        was added, False when the PR changed (nothing left on the PR). Raises
+        LabelError on any failure, after trying to remove a label it may have added.
+        """
+        if level not in RISK_LABELS:
+            raise LabelError("unknown risk level")
+        may_be_added = False
+        try:
+            if not is_current():
+                return False
+            self._ensure_exists(level)
+            may_be_added = True
+            self._send("POST", self._issue_labels, {"labels": [RISK_LABELS[level][0]]}, (200,))
+            if is_current():
+                return True
+            self._remove(level)
+            return False
+        except Exception:
+            if may_be_added:
+                try:
+                    self._remove(level)
+                except LabelError:
+                    pass
+            raise LabelError("label publishing failed") from None
+
+    def _ensure_exists(self, level: str) -> None:
+        name, colour = RISK_LABELS[level]
+        if self._send("GET", f"{self._repo_labels}/{_encoded(name)}", None, (200, 404)) == 200:
+            return
+        # 422: another run created the label in the meantime.
+        self._send("POST", self._repo_labels,
+                   {"name": name, "color": colour, "description": f"PR risk score: {level}"}, (201, 422))
+
+    def _remove(self, level: str) -> None:
+        # 404: the label is not on the PR, which is the state we want.
+        self._send("DELETE", f"{self._issue_labels}/{_encoded(RISK_LABELS[level][0])}", None, (200, 204, 404))
+
+    def _send(self, method: str, url: str, body: Optional[Dict[str, Any]], accepted: tuple) -> int:
+        if self._transport is None:
+            self._transport = default_transport()
+        for attempt in range(_ATTEMPTS):
+            status = self._transport(method, url, body)
+            if status in accepted:
+                return status
+            if status < 500 or attempt == _ATTEMPTS - 1:
+                break
+            self._sleep(2 ** attempt)
+        raise LabelError(f"GitHub label request {method} returned {status}")
+
+
+def _encoded(name: str) -> str:
+    return urllib.parse.quote(name, safe="")

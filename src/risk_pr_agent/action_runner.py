@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 from .commands import risk_summary
 from .github import GitHubClient, GitHubError, RepoRef
+from .labels import RISK_LABELS, LabelError, RiskLabels
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
@@ -64,10 +65,15 @@ def _fetch_git(repo: RepoRef, base: str, head: str, directory: Path) -> None:
         raise ActionError("git_fetch_failed") from None
 
 
-def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
+def _run_scorer(repo: RepoRef, number: int, directory: Path,
+                share_github_token: bool = True) -> Dict[str, Any]:
     output = directory / "scored.json"
     environment = _git_environment()
     environment["PYTHONPATH"] = str(SOURCE_ROOT / "src")
+    if not share_github_token:
+        # A token that may write labels stays out of the process that handles PR content.
+        environment.pop("GITHUB_TOKEN", None)
+        environment.pop("GH_TOKEN", None)
     # Publish only after checking that the model and GitHub still refer to the
     # revision we fetched. Neither the PR checkout nor its .env is ever loaded.
     environment.pop("GITHUB_OUTPUT", None)
@@ -102,13 +108,44 @@ def _publish(result: Dict[str, Any], result_path: str) -> None:
             while delimiter in summary:
                 delimiter = secrets.token_hex(16)
             handle.write(f"summary<<{delimiter}\n{summary.rstrip(chr(10))}\n{delimiter}\n")
+            handle.write(f"label_published={'true' if result.get('label_published') is True else 'false'}\n")
     print(summary)
 
 
+def _clear_risk_labels(repo: RepoRef, number: int) -> RiskLabels:
+    risk_labels = RiskLabels(repo, number)
+    try:
+        risk_labels.clear()
+    except LabelError:
+        # The old label may still be on the PR, so this run must not score it.
+        raise ActionError("label_error") from None
+    return risk_labels
+
+
+def _publish_risk_label(risk_labels: RiskLabels, result: Dict[str, Any], client: GitHubClient,
+                        repo: RepoRef, number: int, revision: tuple) -> None:
+    def unchanged() -> bool:
+        try:
+            return _revision(client.get_pull_request(repo, number), number) == revision
+        except ActionError:
+            return False
+
+    try:
+        published = risk_labels.publish(result["risk_label"], unchanged)
+    except LabelError:
+        published, status = False, "label_error"
+    else:
+        status = "ok" if published else "pr_changed"
+    result["label_published"] = published
+    if status != "ok":
+        result.update(status=status, risk_label=None, probabilities=None)
+
+
 def run_action(repo_value: str, number_value: str, result_path: str,
-               expected_head: str = "") -> int:
+               expected_head: str = "", publish_label: bool = False) -> int:
     result: Dict[str, Any] = {"schema_version": 2, "candidate": True,
                               "input_profile": "metadata-diff", "risk_label": None}
+    risk_labels = client = revision = None
     try:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repo_value):
             raise ActionError("invalid_repository")
@@ -127,6 +164,8 @@ def run_action(repo_value: str, number_value: str, result_path: str,
             raise ActionError("missing_credentials")
         if os.environ.get("GITHUB_SERVER_URL", "https://github.com") != "https://github.com":
             raise ActionError("unsupported_repository")
+        if publish_label:
+            risk_labels = _clear_risk_labels(repo, number)
         client = GitHubClient()
         base, head = _revision(client.get_pull_request(repo, number), number)
         if expected_head and head != expected_head:
@@ -134,12 +173,13 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         with tempfile.TemporaryDirectory(prefix="jev-pr-") as temporary:
             directory = Path(temporary)
             _fetch_git(repo, base, head, directory / "target.git")
-            result = _run_scorer(repo, number, directory)
+            result = _run_scorer(repo, number, directory, share_github_token=not publish_label)
             snapshot = result.get("snapshot") or {}
             if (snapshot.get("source_base_sha"), snapshot.get("source_head_sha")) != (base, head):
                 raise ActionError("pr_changed")
             if _revision(client.get_pull_request(repo, number), number) != (base, head):
                 raise ActionError("pr_changed")
+            revision = (base, head)
         if not isinstance(result.get("status"), str) or not re.fullmatch(r"[a-z_]+", result["status"]):
             raise ActionError("invalid_result")
         if result.get("risk_label") not in (None, "low", "medium", "high") or (
@@ -153,6 +193,10 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         # Child output and HTTP bodies can include arbitrary PR text. Keep them
         # out of logs and artifacts; the status makes the failure visible.
         result.update(status="action_error", risk_label=None, probabilities=None)
+    if publish_label:
+        result["label_published"] = False
+        if risk_labels and revision and result.get("status") == "ok" and result.get("risk_label") in RISK_LABELS:
+            _publish_risk_label(risk_labels, result, client, repo, number, revision)
     if result.get("status") != "ok":
         # The action does not vouch for this result, so it publishes no model verdict.
         for key in _VERDICT_FIELDS:
@@ -164,7 +208,8 @@ def run_action(repo_value: str, number_value: str, result_path: str,
 def main() -> int:
     return run_action(os.environ.get("INPUT_REPO", ""), os.environ.get("INPUT_PR_NUMBER", ""),
                       os.environ.get("INPUT_RESULT_PATH", "risk-pr-result.json"),
-                      os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""))
+                      os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""),
+                      publish_label=os.environ.get("INPUT_PUBLISH_LABEL", "false") == "true")
 
 
 if __name__ == "__main__":
