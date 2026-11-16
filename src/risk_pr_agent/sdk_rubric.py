@@ -13,12 +13,15 @@ from . import sdk_facts
 
 MECHANISMS = ("m_stability", "m_performance", "m_contract", "m_data", "m_inherited", "m_reach", "m_ships")
 _LEVELS = ("low", "medium", "high")
+# The rubric always comes from the action's own checkout, independently of the
+# fact-sheet root, so the shared text cannot vary with where fact sheets load from.
+RUBRIC_ROOT = Path(__file__).resolve().parents[2] / "sdk"
 
 
 def _load(root: Path | None) -> dict:
     import tomllib
 
-    root = sdk_facts.SDK_ROOT if root is None else root
+    root = RUBRIC_ROOT if root is None else root
     with (root / "rubric.toml").open("rb") as handle:
         data = tomllib.load(handle)
     if set(data.get("criteria", {})) != set(_LEVELS):

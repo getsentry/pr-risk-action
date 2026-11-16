@@ -189,12 +189,36 @@ def _binary_evidence(source):
     return evidence
 
 
+def _sdk_tags(sdk_facts, sheet, paths):
+    """Tag each side of a file (both paths of a rename) and combine them."""
+    tags = [sdk_facts.tag_path(sheet, path) for path in paths]
+    return {"families": sorted({family for tag in tags for family in tag["families"]}),
+            "shared_core": any(tag["shared_core"] for tag in tags),
+            "kinds": sorted({kind for tag in tags for kind in tag["kinds"]}),
+            "unmapped": any(tag["unmapped"] for tag in tags)}
+
+
 def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None):
-    """Preserve metadata and bound standard diff context; retain legacy experiments."""
+    """Preserve metadata and bound standard diff context; retain legacy experiments.
+
+    SDK mode applies only to metadata-diff requests for a repository with a fact
+    sheet: title and description are withheld, files are tagged, and the shared
+    SDK rubric replaces the generic risk question. Other requests are unchanged.
+    """
     configuration = _configuration(variant, max_bytes, input_profile)
     variant = configuration["variant"]
     input_profile = configuration.get("input_profile")
     max_bytes = configuration["max_bytes"]
+    sheet = sheet_error = None
+    if input_profile == "metadata-diff" and isinstance(snapshot.get("repo"), str):
+        # Imported lazily: the SDK modules need tomllib (Python 3.11+).
+        from . import sdk_facts, sdk_rubric
+        try:
+            sheet = sdk_facts.load_fact_sheet(snapshot["repo"])
+        except sdk_facts.FactSheetError:
+            sheet_error = True
+        if sheet is not None:
+            configuration["sdk"] = {"rubric_version": sdk_rubric.rubric_version(), "facts_hash": sheet["hash"]}
     result = {"configuration": configuration, "configuration_hash": _hash(configuration), "omitted": []}
     profile = input_profile or "diff"
     stages = {"metadata-files": ("full_files", "diff_only"),
@@ -205,12 +229,15 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
         result["context_stage"] = context_stage or "full_files"
     elif profile == "metadata-diff":
         result["context_stage"] = context_stage or "bounded_diff"
-    with_description = profile in ("description", "paths-lines-description", "diff-description", "metadata-diff", "metadata-files")
+    with_description = sheet is None and profile in (
+        "description", "paths-lines-description", "diff-description", "metadata-diff", "metadata-files")
     with_lines = profile in ("paths-lines", "paths-lines-description", "metadata-diff", "metadata-files")
     with_diff = profile in ("diff", "diff-description", "metadata-diff", "metadata-files")
     metadata = snapshot.get("pr_metadata") or {}
     if input_profile is not None:
         result["input_profile"] = input_profile
+    if sheet_error:
+        return {**result, "status": "invalid_fact_sheet"}
     if with_description:
         result["description_provenance"] = {
             key: metadata[key] for key in ("source", "captured_at", "capture_kind", "source_updated_at")
@@ -230,6 +257,7 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
     if not source_files and profile != "description":
         return {**result, "status": "empty_diff"}
     files = []
+    sdk_files = []
     selected_files = [] if profile == "description" else sorted(source_files, key=lambda value: value.get("path", ""))
     for source in selected_files:
         path, patch = source.get("path"), source.get("patch")
@@ -266,12 +294,25 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
             if any(not isinstance(source.get(side), str) for side in ("before", "after")):
                 return {**result, "status": "incomplete_file_content", "missing": [path]}
             file.update({side: source[side] for side in ("before", "after")})
+        if sheet is not None:
+            tags = _sdk_tags(sdk_facts, sheet, [path] + ([file["previous_path"]] if "previous_path" in file else []))
+            sdk_files.append({"path": path, **tags})
+            file.update({key: copy.deepcopy(tags[key]) for key in ("families", "shared_core", "kinds")})
+            if tags["unmapped"]:
+                file["unmapped"] = True
         files.append(file)
     if profile != "description":
         state["files"] = files
     if with_lines:
         state["line_totals"] = {key: sum(file[key] for file in files) for key in ("additions", "deletions")}
-    request = {"model": MODEL, "state": state, "questions": {"risk": copy.deepcopy(RISK_QUESTION)}, "providerOptions": {}}
+    questions = {"risk": copy.deepcopy(RISK_QUESTION)}
+    if sheet is not None:
+        families_touched = sorted({family for file in sdk_files for family in file["families"]})
+        shared_core = any(file["shared_core"] for file in sdk_files)
+        state["sdk"] = {"families_touched": families_touched, "shared_core": shared_core}
+        result["sdk"] = {**configuration["sdk"], **state["sdk"], "files": sdk_files}
+        questions = sdk_rubric.build_questions(families_touched, shared_core)
+    request = {"model": MODEL, "state": state, "questions": questions, "providerOptions": {}}
     size = lambda: len(_json(request).encode("utf-8"))
     if profile == "metadata-diff":
         from .context_budget import fit_diff_context
