@@ -1,6 +1,6 @@
 # PR Risk Action
 
-Classify a pull request as `low`, `medium` or `high` with Typesafe AI Jev through Vercel AI Gateway. Each request includes the PR title and description, changed paths/status, additions/deletions per file and in total, and Git diffs within the context budget. Inference does not need historical PRs or a trained model.
+Classify a pull request as `low`, `medium` or `high` with Typesafe AI Jev through Vercel AI Gateway. Outside SDK mode (see [SDK repositories](#sdk-repositories)), each request includes the PR title and description, changed paths/status, additions/deletions per file and in total, and Git diffs within the context budget. Inference does not need historical PRs or a trained model.
 
 This is an advisory evaluation candidate. It does not authorize merging, replace existing checks, apply labels, or change branch protection. Probabilities describe the risk classes, not incident likelihood.
 
@@ -54,7 +54,7 @@ The Action verifies that the PR has not moved before publishing a classification
 
 ## Result
 
-The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label` and `status` outputs. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
+The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label`, `status` and `summary` outputs. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
 
 Binary and non-UTF-8 changes are supported, including PRs containing only binaries. Jev receives paths, change status, Git headers, and the size and SHA-256 of each available side. Binary bytes and encoded Git payloads are excluded; readable text sides of text/binary conversions share the code context budget. The request and JSON result identify the binary sides whose contents were not inspected. Binary presence alone does not impose a risk class.
 
@@ -62,7 +62,26 @@ The default context keeps the full title, description, file inventory and counts
 
 An explicit provider context rejection reduces the code prefix by half, then removes code if necessary. Transient errors retry the same request. There are **four provider attempts total**, with waits of **10, 20 and 30 seconds** before attempts two, three and four, including any context fallback. Each distinct request has its own hash and journal; all attempts contribute to accounting.
 
-Missing Git objects or required metadata, invalid binary metadata, metadata that cannot fit even after compaction, or exhausted provider attempts produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Unknown usage or cost stays unknown. Truncation does not impose a risk class, and quality on partially visible changes still needs evaluation.
+Missing Git objects or required metadata, a broken SDK fact sheet or rubric (`invalid_fact_sheet`), invalid binary metadata, metadata that cannot fit even after compaction, or exhausted provider attempts produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Unknown usage or cost stays unknown. Truncation does not impose a risk class, and quality on partially visible changes still needs evaluation.
+
+## SDK repositories
+
+Repositories with a fact sheet under `sdk/repos/` in this Action are classified in SDK mode, which uses one shared rubric for Sentry SDKs, does not send the PR title or description, and records why the label was chosen. There is no input to set: adding or removing the fact sheet is what turns it on. Callers pick it up by moving to a newer pinned commit. See [SDK repositories](jev-risk-classification.md#sdk-repositories) for the rubric, rules, result fields and how to add a repository.
+
+In SDK mode, read `risk-label` (or `risk_label` in the JSON), not any other label field. A fact sheet or rubric file that cannot be loaded gives the status `invalid_fact_sheet` and no label.
+
+The `summary` output holds the same Markdown as the job summary. To post it as a PR comment, pass it through an environment variable and never put `${{ }}` inside a `run:` script, because the summary contains text derived from an untrusted pull request. This needs `pull-requests: write` in the caller workflow, which the Action itself does not need.
+
+```yaml
+      - name: Comment risk summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SUMMARY: ${{ steps.risk.outputs.summary }}
+        run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$SUMMARY"
+```
+
+Give the classify step `id: risk` for this to work.
 
 ## Development and evaluation
 

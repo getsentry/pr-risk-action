@@ -14,9 +14,82 @@ Rubric 4 keeps the class boundaries from rubric 2 and the binary-evidence guidan
 
 A new feature is not automatically high. Consider whether it changes existing behavior, is actually isolated, runs by default, changes shared state or infrastructure, and can be disabled or reverted. A feature flag in the description is a claim to check against the code. Similarly, “any code could have a bug” is too broad a reason for high. Missing modified tests, sensitive paths, line counts and titles are not automatic labels.
 
+## SDK repositories
+
+Sentry SDK repositories share one meaning of the three labels, anchored on customer impact. A released SDK cannot be rolled back and customers upgrade slowly, so a wrong `low` is the expensive mistake; a wrong `medium` or `high` only costs a review. The label describes the change, never its author: the same diff gets the same label whoever wrote it.
+
+### How SDK mode is selected
+
+A repository is in SDK mode when the Action contains `sdk/repos/<owner>__<repo>.toml` (lower case, for example `getsentry__sentry-java.toml`). There is no action input. Repositories without a fact sheet keep today's request, hashes and result keys exactly. A repository string that is not an `owner/name` slug is treated as having no fact sheet. The rubric, fact sheets and rules load only from the Action's own checkout, never from the target repository or the pull request.
+
+If a fact sheet or `sdk/rubric.toml` cannot be loaded or fails validation, the result has status `invalid_fact_sheet` and no label.
+
+The first fact sheets cover sentry-java, sentry-javascript, sentry-python, sentry-dotnet, sentry-cocoa and sentry-react-native.
+
+### What the levels mean
+
+| Label | Meaning |
+| --- | --- |
+| low | The supplied code positively shows one of: (a) nothing that ships to customers changes at runtime (docs, comments, tests, samples, developer tooling that never affects the shipped artifact, mechanical moves with no behavior change); or (b) shipped behavior changes only in a narrow, fully visible way that cannot crash, hang or slow the host application, cannot change or drop data sent to Sentry, and changes nothing customers compile, link or configure against. "No obvious bug" is not enough. |
+| medium | The default. Shipped behavior changes with a plausible way to regress and bounded impact: one integration, an opt-in or off-by-default feature, or a failure that degrades data sent to Sentry without harming the host application. Also the answer whenever the evidence does not support low and no high mechanism is established. |
+| high | A credible, change-specific path to harming customers' applications or all users of an SDK area, on a default or widely used path. Examples: a crash or hang in the host application, a noticeable startup or size cost, an incompatible public API or default change, broad loss or personal-data exposure in what is sent to Sentry, or a dependency or bundled SDK change every customer inherits. |
+
+### What Jev sees
+
+The PR title and description are not sent, so editing them can never change a label. Text inside the diff is still shown and is treated as evidence, not instructions. Each changed file carries tags from the fact sheet (below), and the question includes an example block only for the families the PR touches, plus a sentence about shared core when it is touched. Snapshot, diff ordering, context budget, retries and fallback are unchanged.
+
+### Families and kinds
+
+A fact sheet holds two independent mappings from path patterns (`*` matches within a directory, `**` across directories).
+
+- Areas say where code runs and give one or more families: `server`, `mobile-native`, `browser`, `hybrid`, `tooling`. An area may also be marked `shared_core`, meaning every platform in the repository builds on it.
+- Kinds say what a file is: `tests`, `samples`, `docs`, `dev-tooling`, `public-api-record`, `dependencies`, `build-release`.
+
+A file can have several kinds; every matching pattern applies and the blocking kinds still block. A file whose kinds are all non-shipping (`tests`, `samples`, `docs`, `dev-tooling`) counts towards no family and is never shared core. A file matching no area and no kind is unmapped. A rename is tagged by both its old and new path.
+
+`sdk/defaults.toml` holds kinds that look the same everywhere. They are merged into every fact sheet; a repository sheet can add kinds but cannot remove or override them. Fact sheets carry no free text, only path patterns, family names, kind names and `shared_core`.
+
+### Rules that block low
+
+After the model answers, fixed rules run in Python. A rule never lowers a label and never produces `high`; it can only raise a model `low` to `medium`.
+
+| Rule | Fires when |
+| --- | --- |
+| R1 | Any code was truncated or omitted, or the request fell back to a reduced context stage. |
+| R2 | Any binary side was not inspected. |
+| R3 | Any changed file is unmapped. |
+| R4 | Any changed file is a `public-api-record`. |
+| R5 | Any changed file is of kind `dependencies`. |
+| R6 | Any changed file is of kind `build-release`. |
+| R7 | The model chose low and `probabilities.low` is below 0.90. Provider confidence plays no part. |
+
+The model is always called. Every rule that fires is recorded in `low_blocked_by` whatever the model chose, so analysis can see how often each rule would bind, but only a model `low` is raised.
+
+### Result fields
+
+- `risk_label`: the final label after the rules. Callers should publish and read this one.
+- `model_label`: what the model chose.
+- `low_blocked_by`: a list of `{"rule", "files"}` entries, one per rule that fired.
+- `mechanisms`: for each risk mechanism, the model's probability from a yes/no question asked in the same request (`m_stability`, `m_performance`, `m_contract`, `m_data`, `m_inherited`, `m_reach`, `m_ships`). A response that lacks any of them is `invalid_response` with no label.
+- `sdk`: the rubric version, a hash of the fact sheet and defaults, `families_touched`, `shared_core`, and per-file families, kinds and `unmapped`.
+
+The per-attempt log inside a result (`attempts`) keeps the model's raw label. Read the top-level `risk_label`, not an attempt's.
+
+Mechanism answers are shown in the summary and recorded, but they do not change the label. Jev returns probabilities, not written reasoning, so the summary explains a label with the facts instead: the final and model labels, the families touched, each rule that fired with up to five of its files, and the mechanism probabilities, highest first. The SDK explanation comes before the closing disclaimer.
+
+### Adding a repository
+
+1. Write `sdk/repos/<owner>__<repo>.toml` (lower case) with `[[area]]` and `[[kind]]` tables, reading the repository's layout. Use patterns rather than lists so new modules need no edit.
+2. In a clone of the repository, run `git ls-files | risk-pr sdk-coverage --repo OWNER/NAME` until it exits 0. It prints counts per family and kind and lists unmapped paths; exit status 1 means some are unmapped, 2 means no fact sheet was found.
+3. Add spot-check tests in `tests/test_sdk_facts.py` for the paths that matter most (shared core, public API records, samples, build files).
+
+Never give a non-shipping kind (`tests`, `samples`, `docs`, `dev-tooling`) to something that ships, such as a published test-support module or docs that carry runnable configuration. Such a file would stop counting towards its families and could be labelled low. A stale sheet fails safe: new paths are unmapped, which blocks low through R3, but someone must keep sheets current.
+
+Changing the wording in `sdk/rubric.toml` needs a bump of its `version`, so SDK requests never share a cache entry with an older rubric. Changes under `sdk/` and the `sdk_*.py` modules change what every SDK repository's label means and deserve owner review.
+
 ## Evidence sent to Jev
 
-The default `metadata-diff` profile sends the PR title/description, changed paths/status (including previous paths for renames), additions/deletions per file and totals, and text diffs within the context budget. `score`, `build`, `score-pr` and the Python request/scoring APIs resolve omitted context options to this same input. Omitted and explicit profile options have the same request and cache identity at the current versions; context 7/rubric 4 intentionally invalidate the earlier evaluation cache. Selecting this input does not count as a passed holdout evaluation.
+Outside SDK mode, the default `metadata-diff` profile sends the PR title/description, changed paths/status (including previous paths for renames), additions/deletions per file and totals, and text diffs within the context budget. `score`, `build`, `score-pr` and the Python request/scoring APIs resolve omitted context options to this same input. Omitted and explicit profile options have the same request and cache identity at the current versions; context 7/rubric 4 intentionally invalidate the earlier evaluation cache. Selecting this input does not count as a passed holdout evaluation.
 
 Binary and non-UTF-8 files contribute Git headers and per-side kinds, byte sizes and SHA-256 hashes. The request explicitly lists uninspected binary sides and includes readable text sides within the code budget. Binary-only PRs can be classified from this evidence; binary presence and zero textual line counts do not imply a risk class. Missing Git objects or incomplete binary metadata still leave the PR unclassified.
 
