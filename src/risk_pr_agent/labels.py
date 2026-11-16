@@ -24,9 +24,13 @@ RISK_LABELS = {"low": ("risk: low", "0E8A16"), "medium": ("risk: medium", "FBCA0
                "high": ("risk: high", "B60205")}
 _ATTEMPTS = 3
 _CLEANUP_ATTEMPTS = 3
+_TIMEOUT = 30.0
+# After SIGINT the runner sends SIGTERM about 7.5 s later, then SIGKILL.
+_CANCEL_TIMEOUT = 5.0
 
-# (method, url, json body or None) -> HTTP status. Network failures report a 5xx status.
-Transport = Callable[[str, str, Optional[Dict[str, Any]]], int]
+# (method, url, json body or None, timeout=seconds) -> HTTP status.
+# Network failures report a 5xx status.
+Transport = Callable[..., int]
 
 
 class LabelError(RuntimeError):
@@ -56,12 +60,12 @@ def default_transport() -> Transport:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "risk-pr-agent/0.1",
                "X-GitHub-Api-Version": "2022-11-28", "Authorization": f"Bearer {token}"}
 
-    def send(method: str, url: str, body: Optional[Dict[str, Any]]) -> int:
+    def send(method: str, url: str, body: Optional[Dict[str, Any]], timeout: float = _TIMEOUT) -> int:
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(url, data=data, method=method,
                                          headers={**headers, **({"Content-Type": "application/json"} if data else {})})
         try:
-            with _OPENER.open(request, timeout=30) as response:
+            with _OPENER.open(request, timeout=timeout) as response:
                 return response.status
         except urllib.error.HTTPError as error:
             error.close()
@@ -113,9 +117,13 @@ class RiskLabels:
                 raise LabelError("label publishing failed", cleanup_failed=True) from None
             raise LabelError("label publishing failed") from None
         except BaseException:
-            # Cancellation (SIGINT) or exit: one quick removal attempt, then stop.
+            # Cancellation (SIGINT, or SIGTERM as SystemExit): one short DELETE with no
+            # retry, so it fits the runner's grace period; the next run clears the rest.
             if may_be_added:
-                self._clean_up(level, attempts=1)
+                try:
+                    self._remove(level, timeout=_CANCEL_TIMEOUT, attempts=1)
+                except Exception:
+                    pass
             raise
         if unchanged:
             return True
@@ -123,9 +131,9 @@ class RiskLabels:
             raise LabelError("pull request changed and label removal failed", cleanup_failed=True)
         return False
 
-    def _clean_up(self, level: str, attempts: int = _CLEANUP_ATTEMPTS) -> bool:
-        """Try to remove the label ``attempts`` times; never raises an Exception."""
-        for _ in range(attempts):
+    def _clean_up(self, level: str) -> bool:
+        """Try to remove the label up to three times; never raises an Exception."""
+        for _ in range(_CLEANUP_ATTEMPTS):
             try:
                 self._remove(level)
                 return True
@@ -141,21 +149,23 @@ class RiskLabels:
         self._send("POST", self._repo_labels,
                    {"name": name, "color": colour, "description": f"PR risk score: {level}"}, (201, 422))
 
-    def _remove(self, level: str) -> None:
+    def _remove(self, level: str, timeout: float = _TIMEOUT, attempts: int = _ATTEMPTS) -> None:
         # 404: the label is not on the PR, which is the state we want.
-        self._send("DELETE", f"{self._issue_labels}/{_encoded(RISK_LABELS[level][0])}", None, (200, 204, 404))
+        self._send("DELETE", f"{self._issue_labels}/{_encoded(RISK_LABELS[level][0])}", None,
+                   (200, 204, 404), timeout, attempts)
 
-    def _send(self, method: str, url: str, body: Optional[Dict[str, Any]], accepted: tuple) -> int:
+    def _send(self, method: str, url: str, body: Optional[Dict[str, Any]], accepted: tuple,
+              timeout: float = _TIMEOUT, attempts: int = _ATTEMPTS) -> int:
         if self._transport is None:
             self._transport = default_transport()
-        for attempt in range(_ATTEMPTS):
+        for attempt in range(attempts):
             try:
-                status = self._transport(method, url, body)
+                status = self._transport(method, url, body, timeout=timeout)
             except Exception:
                 status = 599  # never let a transport failure skip the caller's clean-up
             if status in accepted:
                 return status
-            if status < 500 or attempt == _ATTEMPTS - 1:
+            if status < 500 or attempt == attempts - 1:
                 break
             self._sleep(2 ** attempt)
         raise LabelError(f"GitHub label request {method} returned {status}")

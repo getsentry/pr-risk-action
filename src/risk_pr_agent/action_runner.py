@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import tempfile
@@ -217,7 +218,13 @@ def run_action(repo_value: str, number_value: str, result_path: str,
     return 0 if result.get("status") == "ok" else 1
 
 
+def _exit_on_sigterm(signum: int, frame: Any) -> None:
+    # Cancellation may arrive as SIGTERM; raising lets label clean-up run as for SIGINT.
+    raise SystemExit(128 + signum)
+
+
 def main() -> int:
+    signal.signal(signal.SIGTERM, _exit_on_sigterm)
     return run_action(os.environ.get("INPUT_REPO", ""), os.environ.get("INPUT_PR_NUMBER", ""),
                       os.environ.get("INPUT_RESULT_PATH", "risk-pr-result.json"),
                       os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""),

@@ -102,7 +102,9 @@ With the Action input `publish-label: true`, the Action applies the labels `risk
 3. Only when the status is `ok`: re-read the PR; if it is closed or its base or head differs from the scored revision, add nothing and report `pr_changed`. Otherwise create the repository label if missing (a concurrent creation is fine), add the final `risk_label` (never `model_label`), and re-read the PR again; if it moved or closed, remove the label and report `pr_changed`.
 4. Any failure in step 3 removes the label if it may have been added and reports `label_error`.
 
-Removing a label this run may have added (after a move or a failure) is tried up to three times. A cancelled run (SIGINT) that may have added the label tries one removal before stopping. If every try fails, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR; the next run clears it in step 1.
+Removing a label this run may have added (after a move or a failure) is tried up to three times. A cancelled run (SIGINT or SIGTERM) that may have added the label makes a single short removal attempt (one request, 5-second timeout, no retry) so it fits the runner's grace period; any label left behind is cleared by the next run. If every try fails, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR; the next run clears it in step 1.
+
+With `publish-label: true` and no GitHub token available, the run ends `label_error` at step 1.
 
 `label_error` and `pr_changed` carry no label and no model verdict, like every non-`ok` status, and fail the job. Since step 1 runs first, a PR whose run did not finish step 3 carries no risk label, unless the clean-up described above failed. The result field `label_published` (present only with the input on) and the output `label-published` are `true` only when step 3 completed.
 
