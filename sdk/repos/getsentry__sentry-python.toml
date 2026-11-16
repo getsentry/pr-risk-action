@@ -14,7 +14,7 @@ paths = ["tests/**", "tox.ini"]
 kind = "tests"
 
 [[kind]]
-paths = ["scripts/**", "pyproject.toml", "setup.py", "MANIFEST.in", "renovate.json"]
+paths = ["scripts/**", "pyproject.toml", "setup.py", "MANIFEST.in", "renovate.json", ".python-version"]
 kind = "build-release"
 
 [[kind]]
@@ -27,7 +27,7 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  ".coveragerc*", "codecov.yml", "_typos.toml", ".python-version", ".git-blame-ignore-revs",
+  ".coveragerc*", "codecov.yml", "_typos.toml", ".git-blame-ignore-revs",
   "agents.toml", "warden.toml",
 ]
 kind = "dev-tooling"

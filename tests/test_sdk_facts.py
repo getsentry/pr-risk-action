@@ -64,6 +64,8 @@ class FactSheetTest(unittest.TestCase):
             '[[kind]]\npaths = ["a/**"]\nkind = "internal"\n',               # unknown kind
             'title = "x"\n',                                                 # unknown top-level key
             '[[area]\n',                                                     # syntax error
+            '[[area]]\npaths = ["a/**"]\nfamilies = ["server"]\nshared_core = "yes"\n',  # non-bool shared_core
+            '[[area]]\npaths = ["a/**"]\nfamilies = []\n',                    # empty families
         ]
         for text in bad:
             with tempfile.TemporaryDirectory() as directory:
@@ -106,6 +108,8 @@ class ShippedSheetsTest(unittest.TestCase):
             sheet = load_fact_sheet("a/b", root)
             self.assertEqual(tag_path(sheet, "docs/x.md")["kinds"], ["docs"])
             self.assertEqual(tag_path(sheet, "pkg/package.json")["kinds"], ["dependencies"])
+            self.assertEqual(tag_path(sheet, ".gitattributes")["kinds"], ["build-release"])
+            self.assertEqual(tag_path(sheet, "pkg/.gitattributes")["kinds"], ["build-release"])
 
 
 
@@ -174,6 +178,7 @@ class RealSheetSpotCheckTest(unittest.TestCase):
         self.assert_families("sentry-python", "sentry_sdk/integrations/django/__init__.py", ["server"])
         self.assert_families("sentry-python", "sentry_sdk/client.py", ["server"], shared_core=True)
         self.assert_tests_only("sentry-python", "tests/test_client.py")
+        self.assertEqual(self.tags("sentry-python", ".python-version")["kinds"], ["build-release"])
 
     def test_sentry_dotnet(self):
         self.assert_has_kind("sentry-dotnet", "modules/sentry-cocoa", "dependencies")
