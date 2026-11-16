@@ -105,3 +105,27 @@ test('other 400 responses remain provider errors without exposing messages', asy
   assert.equal(result.retryable, false);
   assert.equal(JSON.stringify(result).includes('SECRET'), false);
 });
+
+const riskAnswer = { type: 'choice', choice: 'low', probabilities: { low: 0.8, medium: 0.1, high: 0.1 } };
+const mechIds = ['risk', 'm_stability'];
+test('mechanism probabilities are returned beside the risk answer', () => {
+  const result = normalizeResult({ answers: { risk: riskAnswer, m_stability: { type: 'boolean', probability: 0.07 } } }, mechIds);
+  assert.deepEqual(result.mechanisms, { m_stability: 0.07 });
+});
+test('a risk-only result has no mechanisms property', () => {
+  const result = normalizeResult({ answers: { risk: riskAnswer } }, ['risk']);
+  assert.equal('mechanisms' in result, false);
+});
+for (const [name, answer] of [['missing', undefined], ['out of range', { type: 'boolean', probability: 1.2 }],
+  ['wrong type', { type: 'choice', probability: 0.5 }]]) {
+  test(`a ${name} mechanism answer is an invalid evaluation response`, () => {
+    assert.throws(() => normalizeResult({ answers: { risk: riskAnswer, m_stability: answer } }, mechIds),
+      { name: 'InvalidEvaluationResponse' });
+  });
+}
+test('handle rejects unexpected or mistyped questions', async () => {
+  for (const extra of [{ extra: { type: 'boolean', instructions: 'x' } }, { m_stability: { type: 'choice', instructions: 'x' } }]) {
+    const result = await handle({ request: { ...request, questions: { ...request.questions, ...extra } } });
+    assert.equal(result.status, 'invalid_request');
+  }
+});

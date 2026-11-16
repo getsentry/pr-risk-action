@@ -509,6 +509,10 @@ def _normalize_attempt(response, latency_ms, price):
         valid = set(probabilities) == set(LABELS) and all(_number(probabilities.get(label)) is not None and probabilities[label] <= 1 for label in LABELS)
         valid = valid and abs(sum(probabilities.values()) - 1) <= tolerance and response.get("risk_label") in LABELS
         valid = valid and all(value <= probabilities[response["risk_label"]] + 1e-6 for value in probabilities.values())
+        if "mechanisms" in response:
+            mechanisms = response["mechanisms"]
+            valid = valid and isinstance(mechanisms, dict) and all(
+                _number(value) is not None and value <= 1 for value in mechanisms.values())
         if not valid:
             response.update(status="invalid_response", risk_label=None, probabilities=None, retryable=False)
     return response

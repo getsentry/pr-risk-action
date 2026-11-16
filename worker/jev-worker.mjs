@@ -28,7 +28,7 @@ function contextRejected(error, code) {
 }
 
 /** Validate a risk answer and retain bounded metadata, never headers or bodies. */
-export function normalizeResult(result) {
+export function normalizeResult(result, questionIds = ['risk']) {
   const answer = result.answers?.risk;
   const probabilities = answer?.probabilities;
   const decimals = result.rounding?.probabilityDecimals;
@@ -40,10 +40,20 @@ export function normalizeResult(result) {
       || labels.some(label => probabilities[label] > probabilities[answer.choice] + 1e-6)) {
     throw Object.assign(new Error('Invalid probability distribution'), { name: 'InvalidEvaluationResponse' });
   }
+  const mechanisms = {};
+  for (const id of questionIds.filter(id => id !== 'risk')) {
+    const mechanism = result.answers?.[id];
+    if (mechanism?.type !== 'boolean' || !finite(mechanism.probability)
+        || mechanism.probability < 0 || mechanism.probability > 1) {
+      throw Object.assign(new Error('Invalid mechanism answer'), { name: 'InvalidEvaluationResponse' });
+    }
+    mechanisms[id] = mechanism.probability;
+  }
   const gateway = result.providerMetadata?.gateway ?? {};
   const rawConfidence = result.providerMetadata?.typesafe?.confidence?.risk;
   return {
     status: 'ok', risk_label: answer.choice, probabilities,
+    ...(questionIds.length > 1 && { mechanisms }),
     probability_decimals: Number.isInteger(decimals) ? decimals : null,
     provider_confidence: finite(rawConfidence) ? rawConfidence : null,
     usage: {
@@ -71,8 +81,10 @@ export async function handle(message) {
       return { status: 'missing_credentials', retryable: false, latency_ms: 0 };
     }
     const request = message.request;
-    if (request?.model !== 'typesafe-ai/jev' || Object.keys(request.questions ?? {}).join() !== 'risk'
-        || request.questions.risk.type !== 'choice') {
+    const questions = request?.questions ?? {};
+    if (request?.model !== 'typesafe-ai/jev' || questions.risk?.type !== 'choice'
+        || Object.entries(questions).some(([id, question]) => id !== 'risk'
+          && !(/^m_[a-z_]+$/.test(id) && question?.type === 'boolean'))) {
       return { status: 'invalid_request', retryable: false, latency_ms: 0 };
     }
     const provider = gateway.evaluationModel(request.model);
@@ -89,7 +101,7 @@ export async function handle(message) {
     // Python owns retries so every network attempt has an accounting record.
     result = await evaluate({ ...request, model, maxRetries: 0,
       abortSignal: AbortSignal.timeout(message.timeout_ms ?? 60000) });
-    return { ...normalizeResult(result), latency_ms: performance.now() - started };
+    return { ...normalizeResult(result, Object.keys(request.questions)), latency_ms: performance.now() - started };
   } catch (error) {
     const code = Number(error.statusCode ?? error.cause?.statusCode) || null;
     const timeout = error.name === 'TimeoutError' || error.name === 'AbortError';
