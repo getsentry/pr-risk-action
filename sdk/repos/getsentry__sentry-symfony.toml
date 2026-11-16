@@ -1,0 +1,24 @@
+# getsentry/sentry-symfony e312047201b1e8004482144625760f6191130755
+
+[[area]]
+paths = ["src/**"]
+families = ["server"]
+
+[[kind]]
+paths = ["tests/**", "phpunit.xml"]
+kind = "tests"
+
+[[kind]]
+paths = ["scripts/**"]
+kind = "build-release"
+
+[[kind]]
+paths = ["AUTHORS"]
+kind = "docs"
+
+[[kind]]
+paths = [
+  ".php-cs-fixer.dist.php", "phpstan.neon", "phpstan-baseline.neon", "psalm.xml", "psalm-baseline.xml",
+  "codecov.yml",
+]
+kind = "dev-tooling"

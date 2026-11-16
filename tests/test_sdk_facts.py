@@ -207,5 +207,139 @@ class RealSheetSpotCheckTest(unittest.TestCase):
         self.assert_tests_only("sentry-react-native", "packages/core/test/x.test.ts")
 
 
+# (repo, path, families, shared_core, kinds) for the sheets added in the wider rollout, taken from
+# the sheet authors' spot checks. Every path exists at the commit recorded on its sheet's first line.
+SPOT_CHECKS = [
+    ("sentry-go", "client.go", "server", True, ""),
+    ("sentry-go", "gin/sentrygin.go", "server", False, ""),
+    ("sentry-go", "mock_transport.go", "server", True, ""),
+    ("sentry-go", "internal/testutils/mocks.go", "", False, "tests"),
+    ("sentry-go", "_examples/basic/main.go", "", False, "samples"),
+    ("sentry-go", "go.mod", "server", True, "dependencies"),
+
+    ("sentry-ruby", "sentry-ruby/lib/sentry/client.rb", "server", True, ""),
+    ("sentry-ruby", "sentry-ruby/lib/sentry/test_helper.rb", "server", True, ""),
+    ("sentry-ruby", "sentry-rails/app/jobs/sentry/send_event_job.rb", "server", False, ""),
+    ("sentry-ruby", "sentry-sidekiq/spec/spec_helper.rb", "", False, "tests"),
+    ("sentry-ruby", "lib/sentry/test/rake_tasks.rb", "", False, "tests"),
+    ("sentry-ruby", "sentry-rails/gemfiles/ruby-2.7_rails-6.1.0.gemfile.lock", "server", False, "dependencies"),
+
+    ("sentry-rust", "sentry-core/src/hub.rs", "server", True, ""),
+    ("sentry-rust", "sentry-minidump/src/lib.rs", "mobile-native server", False, ""),
+    ("sentry-rust", "sentry-contexts/build.rs", "server", True, ""),
+    ("sentry-rust", "sentry/src/transports/embedded_svc_http.rs", "mobile-native server", True, ""),
+    ("sentry-rust", "sentry/examples/panic-demo.rs", "", False, "samples"),
+    ("sentry-rust", "sentry-core/tests/metrics.rs", "", False, "tests"),
+
+    ("sentry-elixir", "lib/sentry/client.ex", "server", True, ""),
+    ("sentry-elixir", "lib/mix/tasks/sentry.install.ex", "tooling", False, ""),
+    ("sentry-elixir", "lib/sentry/integrations/oban/cron.ex", "server", False, ""),
+    ("sentry-elixir", "mix.exs", "server", False, "dependencies"),
+    ("sentry-elixir", "test/sentry_test.exs", "", False, "tests"),
+    ("sentry-elixir", "config/config.exs", "", False, "build-release"),
+
+    ("sentry-powershell", "modules/Sentry/public/Start-Sentry.ps1", "hybrid server", True, ""),
+    ("sentry-powershell", "modules/Sentry/Sentry.psd1", "hybrid server", True, "public-api-record"),
+    ("sentry-powershell", "modules/Sentry/assemblies-loader.ps1", "hybrid server", True, ""),
+    ("sentry-powershell", "dependencies/Sentry.properties", "hybrid", False, "dependencies"),
+    ("sentry-powershell", "tests/init.tests.ps1", "", False, "tests"),
+    ("sentry-powershell", "samples/send-logs.ps1", "", False, "samples"),
+
+    ("sentry-php", "src/Client.php", "server", True, ""),
+    ("sentry-php", "src/Monolog/Handler.php", "server", False, ""),
+    ("sentry-php", "tests/ClientTest.php", "", False, "tests"),
+    ("sentry-php", "stubs/autoload.php", "", False, "dev-tooling"),
+    ("sentry-php", "scripts/bump-version.sh", "", False, "build-release"),
+    ("sentry-php", ".gitattributes", "", False, "build-release"),
+
+    ("sentry-laravel", "config/sentry.php", "server", False, ""),
+    ("sentry-laravel", "src/Sentry/Laravel/Console/PublishCommand.php", "server tooling", False, ""),
+    ("sentry-laravel", "src/Sentry/Laravel/EventHandler.php", "server", False, ""),
+    ("sentry-laravel", "test/Sentry/EventHandlerTest.php", "", False, "tests"),
+    ("sentry-laravel", "composer.json", "", False, "dependencies"),
+    ("sentry-laravel", "scripts/versionbump.php", "", False, "build-release"),
+
+    ("sentry-symfony", "src/Resources/config/services.yaml", "server", False, ""),
+    ("sentry-symfony", "src/DependencyInjection/Configuration.php", "server", False, ""),
+    ("sentry-symfony", "tests/End2End/App/Kernel.php", "", False, "tests"),
+    ("sentry-symfony", "composer.json", "", False, "dependencies"),
+
+    ("sentry-native", "external/crashpad", "mobile-native", False, "dependencies"),
+    ("sentry-native", "include/sentry.h", "mobile-native", True, "public-api-record"),
+    ("sentry-native", "src/backends/sentry_backend_inproc.c", "mobile-native", False, ""),
+    ("sentry-native", "vendor/libunwind/src/x86_64/Gstep.c", "mobile-native", False, "dependencies"),
+    ("sentry-native", "ndk/lib/src/main/jni/sentry.c", "hybrid mobile-native", False, ""),
+    ("sentry-native", "tests/unit/test_basic.c", "", False, "tests"),
+    ("sentry-native", "examples/crash.c", "", False, "samples"),
+
+    ("sentry-dart", "packages/dart/lib/src/hub.dart", "browser hybrid server", True, ""),
+    ("sentry-dart", "packages/flutter/sentry-native/CMakeCache.txt", "hybrid", False, "dependencies"),
+    ("sentry-dart", "packages/flutter/lib/src/web/sentry_js_sdk_version.dart", "browser hybrid", False, "dependencies"),
+    ("sentry-dart", "packages/flutter/android/build.gradle", "hybrid tooling", False, "build-release dependencies"),
+    ("sentry-dart", "packages/sqflite/lib/src/sentry_database.dart", "hybrid", False, ""),
+    ("sentry-dart", "packages/flutter/example/lib/main.dart", "", False, "samples"),
+
+    ("sentry-capacitor", "src/sdk.ts", "browser hybrid", False, ""),
+    ("sentry-capacitor", "android/build.gradle", "hybrid", False, "build-release dependencies"),
+    ("sentry-capacitor", "Package.swift", "hybrid", False, "dependencies"),
+    ("sentry-capacitor", "scripts/check-siblings.js", "hybrid tooling", False, "build-release"),
+    ("sentry-capacitor", "android/src/main/java/io/sentry/capacitor/SentryCapacitor.java", "hybrid", False, ""),
+    ("sentry-capacitor", "test/sdk.test.ts", "", False, "tests"),
+
+    ("sentry-electron", "src/main/integrations/sentry-minidump/index.ts", "hybrid mobile-native server", False, ""),
+    ("sentry-electron", "src/renderer/sdk.ts", "browser hybrid", False, ""),
+    ("sentry-electron", "src/common/ipc.ts", "browser hybrid server", True, ""),
+    ("sentry-electron", "package.json", "", False, "dependencies"),
+    ("sentry-electron", "test/e2e/versions.json", "", False, "tests"),
+    ("sentry-electron", "rollup.config.mjs", "", False, "build-release"),
+
+    ("sentry-lynx", "packages/lynx-react/src/sdk.ts", "browser hybrid", False, ""),
+    ("sentry-lynx", "packages/lynx-plugin/src/index.ts", "tooling", False, ""),
+    ("sentry-lynx", "packages/lynx-plugin/package.json", "tooling", False, "dependencies"),
+    ("sentry-lynx", "samples/react/src/App.tsx", "", False, "samples"),
+    ("sentry-lynx", "packages/lynx-react/test/lib/sdk.test.ts", "", False, "tests"),
+
+    ("sentry-kotlin-multiplatform", "buildSrc/src/main/java/Config.kt", "", False, "build-release dependencies"),
+    ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/src/nativeInterop/cinterop/SentryInternal/SentryHub.h", "hybrid mobile-native", False, "dependencies"),
+    ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/api/jvm/sentry-kotlin-multiplatform.api", "", False, "public-api-record"),
+    ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform-gradle-plugin/src/main/java/io/sentry/kotlin/multiplatform/gradle/SentryPlugin.kt", "hybrid tooling", False, ""),
+    ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/build.gradle.kts", "hybrid mobile-native server", True, "build-release"),
+    ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/src/commonTest/kotlin/io/sentry/kotlin/multiplatform/SentryIntegrationTest.kt", "", False, "tests"),
+
+    ("sentry-unity", "modules/sentry-native", "", False, "dependencies"),
+    ("sentry-unity", "src/sentry-dotnet", "", False, "dependencies"),
+    ("sentry-unity", "samples/unity-of-bugs/Assets/Scripts/BugFarmButtons.cs", "hybrid", False, ""),
+    ("sentry-unity", "src/Sentry.Unity.Editor/Android/DebugSymbolUpload.cs", "hybrid tooling", False, ""),
+    ("sentry-unity", "package-dev/Runtime/Sentry.Unity.Native.PlayStation.dll.meta", "hybrid", False, "build-release"),
+    ("sentry-unity", "src/Sentry.Unity/SentryUnityOptions.cs", "browser hybrid mobile-native", True, ""),
+    ("sentry-unity", "samples/unity-of-bugs/ProjectSettings/ProjectVersion.txt", "", False, "samples"),
+
+    ("sentry-unreal", "modules/sentry-native", "", False, "dependencies"),
+    ("sentry-unreal", "modules/sentry-cocoa.properties", "", False, "dependencies"),
+    ("sentry-unreal", "plugin-dev/Source/Sentry/Private/Tests/SentryEvent.spec.cpp", "hybrid mobile-native", False, ""),
+    ("sentry-unreal", "plugin-dev/Source/Sentry/Private/SentrySubsystem.cpp", "hybrid mobile-native", True, ""),
+    ("sentry-unreal", "plugin-dev/Scripts/upload_debug_symbols.py", "hybrid tooling", False, ""),
+    ("sentry-unreal", "plugin-dev/Source/Sentry/Sentry_Android_UPL.xml", "hybrid mobile-native tooling", False, "build-release dependencies"),
+    ("sentry-unreal", "plugin-dev/Sentry.uplugin", "hybrid", False, "build-release"),
+
+    ("sentry-godot", "modules/godot-cpp", "", False, "dependencies"),
+    ("sentry-godot", "project/test/util/json_assert", "", False, "dependencies tests"),
+    ("sentry-godot", "doc_classes/SentrySDK.xml", "hybrid", False, "public-api-record"),
+    ("sentry-godot", "src/editor/csproj_patcher.cpp", "hybrid mobile-native tooling", False, ""),
+    ("sentry-godot", "src/sentry/sentry_sdk.cpp", "browser hybrid mobile-native", True, ""),
+    ("sentry-godot", "project/addons/sentry/user_feedback/user_feedback_form.gd", "hybrid", False, ""),
+    ("sentry-godot", "project/main.gd", "", False, "samples"),
+]
+
+
+class RolloutSheetSpotCheckTest(unittest.TestCase):
+    def test_spot_checks(self):
+        for repo, path, families, shared_core, kinds in SPOT_CHECKS:
+            with self.subTest(repo=repo, path=path):
+                self.assertEqual(tag_path(load_fact_sheet(f"getsentry/{repo}"), path),
+                                 {"families": families.split(), "shared_core": shared_core,
+                                  "kinds": kinds.split(), "unmapped": False})
+
+
 if __name__ == "__main__":
     unittest.main()

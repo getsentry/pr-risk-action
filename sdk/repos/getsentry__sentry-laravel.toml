@@ -1,0 +1,21 @@
+# getsentry/sentry-laravel 6f1e23432d040f02d98a4eccf93ea23d822e2990
+
+[[area]]
+paths = ["src/**", "config/**"]
+families = ["server"]
+
+[[area]]
+paths = ["src/Sentry/Laravel/Console/**"]
+families = ["server", "tooling"]
+
+[[kind]]
+paths = ["test/**", "phpunit.xml"]
+kind = "tests"
+
+[[kind]]
+paths = ["scripts/**"]
+kind = "build-release"
+
+[[kind]]
+paths = [".php-cs-fixer.php", "phpstan.neon", "phpstan-baseline.neon", "codecov.yml"]
+kind = "dev-tooling"

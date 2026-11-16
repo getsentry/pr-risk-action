@@ -1,0 +1,49 @@
+# getsentry/sentry-native 5eba64ff776253b93e36056e8ed5dec271af2388
+
+[[area]]
+paths = [
+  "src/**", "include/**", "external/**", "vendor/**", "cmake/**", "toolchains/**", "CMakeLists.txt",
+  "sentry-config.cmake.in", "sentry.rc.in",
+]
+families = ["mobile-native"]
+
+[[area]]
+paths = ["src/*", "src/path/**", "src/transports/**", "include/**", "vendor/*", "CMakeLists.txt"]
+families = ["mobile-native"]
+shared_core = true
+
+[[area]]
+paths = ["ndk/**"]
+families = ["mobile-native", "hybrid"]
+
+[[kind]]
+paths = ["include/sentry.h", "src/exports.map", "ndk/lib/api/**"]
+kind = "public-api-record"
+
+[[kind]]
+paths = ["external/**", "vendor/**"]
+kind = "dependencies"
+
+[[kind]]
+paths = [
+  "CMakeLists.txt", "src/CMakeLists.txt", "external/CMakeLists.txt", "cmake/**", "toolchains/**",
+  "sentry-config.cmake.in", "sentry.rc.in", "src/*.in", "scripts/**", ".mvn/**",
+  "ndk/**/*.gradle.kts", "ndk/*.gradle", "ndk/gradle.properties", "ndk/gradle/**", "ndk/gradlew",
+  "ndk/gradlew.bat", "ndk/debug.keystore", "ndk/**/proguard-rules.pro", "ndk/**/CMakeLists.txt",
+  "ndk/lib/src/main/AndroidManifest.xml",
+]
+kind = "build-release"
+
+[[kind]]
+paths = ["tests/**", "fuzzing-examples/**", "ndk/lib/src/test/**", "ndk/lib/src/androidTest/**", "vendor/acutest.h"]
+kind = "tests"
+
+[[kind]]
+paths = ["examples/**", "ndk/sample/**"]
+kind = "samples"
+
+[[kind]]
+paths = [
+  ".clang-format", ".codechecker-ignore", ".codechecker-suppress", ".codecov.yml", "warden.toml",
+]
+kind = "dev-tooling"
