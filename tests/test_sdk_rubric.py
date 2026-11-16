@@ -51,6 +51,14 @@ class RubricTest(unittest.TestCase):
         self.assertEqual(build_questions(["server", "browser"], False),
                          build_questions(["browser", "server"], False))
 
+    def test_mechanism_questions_carry_preamble(self):
+        data = tomllib.loads((SDK_ROOT / "rubric.toml").read_text())
+        questions = build_questions(["tooling"], False)
+        for name in MECHANISMS:
+            instructions = questions[name]["instructions"]
+            self.assertTrue(instructions.startswith(data["mechanism_preamble"]), name)
+            self.assertIn(data["mechanisms"][name], instructions)
+
     def test_rubric_version(self):
         self.assertEqual(rubric_version(), "1")
 

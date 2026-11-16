@@ -27,6 +27,9 @@ def _load(root: Path | None) -> dict:
         raise ValueError(f"rubric.toml: [mechanisms] must define exactly {MECHANISMS}")
     if set(data.get("families", {})) != set(sdk_facts.FAMILIES):
         raise ValueError(f"rubric.toml: [families] must define exactly {sdk_facts.FAMILIES}")
+    for key in ("instructions", "shared_core", "mechanism_preamble"):
+        if not isinstance(data.get(key), str) or not data[key]:
+            raise ValueError(f"rubric.toml: {key} must be a non-empty string")
     return data
 
 
@@ -51,5 +54,8 @@ def build_questions(families: list[str], shared_core: bool, root: Path | None = 
         }
     }
     for name in MECHANISMS:
-        questions[name] = {"type": "boolean", "instructions": data["mechanisms"][name]}
+        questions[name] = {
+            "type": "boolean",
+            "instructions": f"{data['mechanism_preamble']} {data['mechanisms'][name]}",
+        }
     return questions
