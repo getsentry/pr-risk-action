@@ -1,0 +1,15 @@
+[[kind]]
+paths = [".github/**", ".craft.yml", "Makefile", "**/Dockerfile"]
+kind = "build-release"
+
+[[kind]]
+paths = ["**/*.md", "**/*.mdx", "LICENSE", "LICENSE.*"]
+kind = "docs"
+
+[[kind]]
+paths = [".gitmodules", "**/package.json", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/pyproject.toml", "**/setup.py", "**/setup.cfg", "**/requirements*.txt", "**/uv.lock", "**/poetry.lock", "**/go.mod", "**/go.sum", "**/Cargo.toml", "**/Cargo.lock", "**/Gemfile", "**/Gemfile.lock", "**/*.gemspec", "**/composer.json", "**/composer.lock", "**/*.csproj", "**/Directory.Packages.props", "**/Directory.Build.props", "**/libs.versions.toml", "**/Package.swift", "**/Package.resolved", "**/*.podspec", "**/pubspec.yaml", "**/pubspec.lock"]
+kind = "dependencies"
+
+[[kind]]
+paths = [".claude/**", ".cursor/**", ".agents/**", ".pi/**", ".vscode/**", ".idea/**", ".editorconfig", ".gitignore", ".gitattributes", ".pre-commit-config.yaml"]
+kind = "dev-tooling"

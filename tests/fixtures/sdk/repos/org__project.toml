@@ -1,0 +1,28 @@
+[[area]]
+paths = ["core/**"]
+families = ["server", "mobile-native"]
+shared_core = true
+
+[[area]]
+paths = ["android*/**"]
+families = ["mobile-native"]
+
+[[area]]
+paths = ["web/**"]
+families = ["browser", "server"]
+
+[[kind]]
+paths = ["**/src/test/**"]
+kind = "tests"
+
+[[kind]]
+paths = ["**/api/*.api"]
+kind = "public-api-record"
+
+[[kind]]
+paths = ["samples/**"]
+kind = "samples"
+
+[[kind]]
+paths = ["**/build.gradle.kts"]
+kind = "build-release"

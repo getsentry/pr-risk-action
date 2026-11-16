@@ -1,0 +1,15 @@
+[[kind]]
+paths = [".github/**"]
+kind = "build-release"
+
+[[kind]]
+paths = ["**/*.md"]
+kind = "docs"
+
+[[kind]]
+paths = ["**/package.json"]
+kind = "dependencies"
+
+[[kind]]
+paths = [".cursor/**"]
+kind = "dev-tooling"
