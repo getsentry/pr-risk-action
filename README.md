@@ -48,7 +48,7 @@ jobs:
           retention-days: 30
 ```
 
-No target checkout or target dependency installation is needed. The Action loads its trusted Python source through `PYTHONPATH`, installs the trusted Python dependencies (`tiktoken==0.14.0`) and Node worker dependencies (AI SDK `7.0.106`), preloads the token estimator without the Gateway key, downloads Git objects into an isolated bare repository and reads the exact base/head revisions. PR files are never executed. Git downloads do not receive the Gateway key or GitHub token. This initial integration supports public GitHub repositories, including PRs from forks.
+No target checkout or target dependency installation is needed. The Action loads its trusted Python source through `PYTHONPATH`, installs the trusted Python dependencies (`tiktoken==0.14.0`) and Node worker dependencies (AI SDK `7.0.106`), preloads the token estimator without the Gateway key, downloads Git objects into an isolated bare repository and reads the exact base/head revisions. PR files are never executed. Git downloads and the scorer's Git reads receive neither the Gateway key nor the GitHub token, and the Jev worker does not receive the GitHub token. The nested `actions/setup-python` and `actions/setup-node` are pinned to commit SHAs. This initial integration supports public GitHub repositories, including PRs from forks.
 
 The Action verifies that the PR has not moved before publishing a classification. A moved PR is reported as unclassified. `expected-head-sha` binds automatic runs to their triggering revision; leave it empty for a manual run against the current PR.
 
@@ -56,16 +56,32 @@ Inputs: `repo`, `pr-number`, `expected-head-sha`, `result-path` (default `risk-p
 
 ### Publishing the risk label
 
-With `publish-label: true` the Action owns the PR's `risk: low`, `risk: medium` and `risk: high` labels, and the caller workflow needs `pull-requests: write`. With the default (`false`) the Action makes no write call to GitHub and the read-only permissions shown above are enough.
+With `publish-label: true` the Action owns the PR's `risk: low`, `risk: medium` and `risk: high` labels, and the caller job needs `pull-requests: write`. With the default (`false`) the Action makes no write call to GitHub and the read-only permissions shown above are enough.
+
+Use this caller workflow when publishing labels:
 
 ```yaml
-permissions:
-  contents: read
-  pull-requests: write
+name: PR Risk (Jev)
 
-# ...same trigger, concurrency and job as above...
-      - name: Classify PR risk
-        uses: getsentry/pr-risk-action@<reviewed-jev-commit-sha>
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited, converted_to_draft]
+
+permissions: {}
+
+concurrency:
+  group: pr-risk-${{ github.event.pull_request.number }}
+  cancel-in-progress: false   # every started run reaches its label clear
+
+jobs:
+  risk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write    # this job only; no issues, contents or actions write
+    steps:
+      - uses: getsentry/pr-risk-action@<full commit SHA>
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
         with:
@@ -75,13 +91,42 @@ permissions:
           publish-label: true
 ```
 
-Every run first removes all three risk labels, before scoring and before any check other than the repository, PR number and server checks. It adds the final `risk-label` (never the model label) only when the result is `ok` and the PR is still open at the scored base and head, and checks again after adding. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. If removing a label the run just added fails three times, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR until the next run clears it. See [Label publishing](jev-risk-classification.md#label-publishing).
+- `permissions: {}` at the top and the two permissions on the one job. Do not set the GitHub token or the Gateway key at workflow or job level; keep the key on the one step.
+- `cancel-in-progress: false`, so a run that has started always reaches its label clear. A run overtaken by a push ends `pr_changed`, and the newest pending run scores.
+- Keep `edited`: it is the only event fired when the author changes the base branch.
+- No `if: github.event.pull_request.draft == false`: drafts are scored, and `converted_to_draft` starts a run, so a draft never keeps a label from an earlier revision.
+- Pin the Action to a full commit SHA. Do not add `actions/checkout`, and never check out the PR head in this job.
+- Pre-create the three labels so the job never needs to create one, and remove the caller's own label script so only one writer exists.
+- Keep `workflow_dispatch` out of this workflow if the result will gate review; it runs without `expected-head-sha`.
 
-**Replacing a label script in the caller workflow.** Delete the caller's own label step and set `publish-label: true`. The Action clears the old label at the start of every run, so a label on a PR always belongs to the revision that was scored. Anyone with triage rights can still add a risk label by hand, so automation that acts on `low` must read the check's result for the exact head commit rather than trust the label.
+The Action's first step, before Python, Node or any dependency is set up, removes all three risk labels using the runner's own `python3` and the standard library. If it cannot remove them, the job fails and nothing is scored. The scoring step clears them again before scoring. The Action then adds the final `risk-label` (never the model label) only when the result is `ok`, the repository has an SDK fact sheet (the result has `model_label`), and the PR is still open at the scored base and head; it removes the other two risk labels just before adding and checks the PR again after adding. A repository without a fact sheet gets no label: the result records `label_skipped: "no_fact_sheet"` and the summary says so. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. If removing a label the run just added fails three times, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR until the next run clears it. See [Label publishing](jev-risk-classification.md#label-publishing).
+
+**Replacing a label script in the caller workflow.** Delete the caller's own label step, switch to the workflow above and set `publish-label: true`. The Action clears the old label at the start of every run.
+
+### The label is advisory, not an authorization
+
+A risk label is a hint for reviewers. Triage-role users and any workflow with `issues: write` or `pull-requests: write` can set it, and it can outlive the revision it was computed for (see the limits below). Never let a label approve, merge or skip review of a PR.
+
+What a skip-review or auto-merge consumer must check:
+
+1. Never read the label.
+2. Take the result from the trusted workflow run itself: event `pull_request_target`, this workflow file, on the default branch. A successful job only means status `ok`, not `low`, so read `risk-label`, `label-published` and the scored SHAs. Do not look up artifacts by name alone: a fork `pull_request` run can upload an artifact with the same name.
+3. Require `risk_label == "low"`, `model_label` present, `snapshot.source_head_sha` equal to the PR's current head, `snapshot.source_base_sha` equal to its current base, base ref equal to the default branch, and the PR open and not a draft.
+4. Merge or approve with the head SHA pinned (the merge API's `sha` parameter), so a push between the check and the action fails.
+5. Decide explicitly whether the author may be the only human involved. The author writes everything the classifier sees, so a `low` should reduce review effort, not replace the second reviewer.
+
+Known limits:
+
+- `pull_request_target` takes the workflow from the PR's base branch. Retargeting a PR to a base branch that does not have this workflow stops the check from running, so a label can stay on later, unscored commits until the PR is retargeted back.
+- `pull-requests: write` also permits approving and commenting on pull requests. Repositories that will act on `low` should turn off "Allow GitHub Actions to create and approve pull requests", or split scoring and labelling into separate jobs so the scoring job holds only `pull-requests: read`.
+- The label is published only for repositories with an SDK fact sheet under `sdk/repos/`.
+- If a run is killed between steps, more than one risk label can be on a PR for a short time. Treat more than one risk label as no label.
+
+**Cost.** Any GitHub user can trigger runs by opening or editing a PR, and each run can make up to four model calls. Use a dedicated Gateway key with a spend cap, and do not make this a required check.
 
 ## Result
 
-The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label`, `status`, `summary` and `label-published` outputs. `label-published` is `true` only when the Action added the risk label to the unchanged PR, and `false` otherwise, including when `publish-label` is off. With `publish-label: true` the JSON also carries `label_published`. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
+The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label`, `status`, `summary` and `label-published` outputs. `label-published` is `true` only when the Action added the risk label to the unchanged PR, and `false` otherwise, including when `publish-label` is off. With `publish-label: true` the JSON also carries `label_published`, and `label_skipped: "no_fact_sheet"` when an `ok` result got no label because the repository has no SDK fact sheet. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
 
 Binary and non-UTF-8 changes are supported, including PRs containing only binaries. Jev receives paths, change status, Git headers, and the size and SHA-256 of each available side. Binary bytes and encoded Git payloads are excluded; readable text sides of text/binary conversions share the code context budget. The request and JSON result identify the binary sides whose contents were not inspected. Binary presence alone does not impose a risk class.
 

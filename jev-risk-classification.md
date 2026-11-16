@@ -95,24 +95,39 @@ Bundled-SDK version pins often sit in files no default pattern catches: a Dart c
 
 Never give a non-shipping kind (`tests`, `samples`, `docs`, `dev-tooling`) to something that ships, such as a published test-support module or docs that carry runnable configuration. Such a file would stop counting towards its families and could be labelled low. Folders named tests or samples sometimes ship, so check the packaging before tagging them: in sentry-unreal, `plugin-dev/Source/*/Private/Tests/**` is copied into the release zip and compiled inside the customer's game build, and in sentry-unity, `scripts/pack.ps1` copies `samples/unity-of-bugs/Assets/Scenes` and `Scripts` into the released package as an importable sample. A stale sheet fails safe: new paths are unmapped, which blocks low through R3, but someone must keep sheets current.
 
+Anchor every non-shipping pattern to the roots where those files really live, such as `*/src/test/**`, `packages/*/test/**` or `tests/**`, never `**/test/**`. A pattern that matches at any depth also matches a test-named directory an author creates inside shipping source, and that file would lose its families and be described to the model as a test. Only file-name patterns for repositories that keep tests beside sources (Go's `**/*_test.go`) and docs by extension may match at any depth. `PlantedDirectoryTest` in `tests/test_sdk_facts.py` plants test-, sample- and docs-named directories into each sheet's shipped-source spot checks, so give a new sheet at least one shipped-source spot check with no kinds.
+
 Changing the wording in `sdk/rubric.toml` needs a bump of its `version`, so SDK requests never share a cache entry with an older rubric. Changes under `sdk/` and the `sdk_*.py` modules change what every SDK repository's label means and deserve owner review.
 
 ## Label publishing
 
 With the Action input `publish-label: true`, the Action applies the labels `risk: low`, `risk: medium` and `risk: high` (colours `0E8A16`, `FBCA04`, `B60205`; description `PR risk score: <class>`). With any other value it makes no write call to GitHub. In order:
 
-1. Right after validating the repository and PR number and checking that the server is github.com, remove all three risk labels from the PR. Only `invalid_repository`, `invalid_pr_number` and `unsupported_repository` end a run before this; every later status, including `missing_sdk_data`, `invalid_revision` and `missing_credentials`, comes after it. If clearing fails, the run ends `label_error` without scoring, because the old label may still be there.
-2. Score as usual.
-3. Only when the status is `ok`: re-read the PR; if it is closed or its base or head differs from the scored revision, add nothing and report `pr_changed`. Otherwise create the repository label if missing (a concurrent creation is fine), add the final `risk_label` (never `model_label`), and re-read the PR again; if it moved or closed, remove the label and report `pr_changed`.
-4. Any failure in step 3 removes the label if it may have been added and reports `label_error`.
+1. The Action's first step, before Python, Node or any dependency is set up, validates the repository and PR number as the scorer does, checks that the server is github.com, and removes all three risk labels. It runs on the runner's own `python3 -I` and imports only the standard library and the Action's `src/risk_pr_agent` (`clear_labels`, `labels`, `github`), so it works on the system Python 3.10 of `ubuntu-latest`. It gets the GitHub token but not the Gateway key. If the inputs are invalid or clearing fails, the step exits non-zero and the job fails without scoring.
+2. The scoring step removes the three labels again right after its own input and server checks, as a second line of defence. Only `invalid_repository`, `invalid_pr_number` and `unsupported_repository` end a run before this; every later status, including `missing_sdk_data`, `invalid_revision` and `missing_credentials`, comes after it. If clearing fails, the run ends `label_error` without scoring, because the old label may still be there.
+3. Score as usual.
+4. Only when the status is `ok` and the result is an SDK-mode result (`model_label` and `sdk` present): re-read the PR; if it is closed or its base or head differs from the scored revision, add nothing and report `pr_changed`. Otherwise create the repository label if missing (a concurrent creation is fine), remove the other two risk labels, add the final `risk_label` (never `model_label`), and re-read the PR again; if it moved or closed, remove the label and report `pr_changed`. An `ok` result without a fact sheet adds nothing: the status stays `ok`, `label_published` is `false`, the result records `label_skipped: "no_fact_sheet"`, and the summary says no label is published for repositories without an SDK fact sheet.
+5. Any failure in step 4 removes the label if it may have been added and reports `label_error`.
 
 Removing a label this run may have added (after a move or a failure) is tried up to three times. A cancelled run (SIGINT or SIGTERM) that may have added the label makes a single short removal attempt (one request, 5-second timeout, no retry) so it fits the runner's grace period; any label left behind is cleared by the next run. If every try fails, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR; the next run clears it in step 1.
 
-With `publish-label: true` and no GitHub token available, the run ends `label_error` at step 1.
+With `publish-label: true` and no GitHub token available, the first step fails and the job ends without scoring.
 
-`label_error` and `pr_changed` carry no label and no model verdict, like every non-`ok` status, and fail the job. Since step 1 runs first, a PR whose run did not finish step 3 carries no risk label, unless the clean-up described above failed. The result field `label_published` (present only with the input on) and the output `label-published` are `true` only when step 3 completed.
+`label_error` and `pr_changed` carry no label and no model verdict, like every non-`ok` status, and fail the job. Since steps 1 and 2 run first, a PR whose run did not finish step 4 carries no risk label, unless the clean-up described above failed. The result field `label_published` (present only with the input on) and the output `label-published` are `true` only when step 4 completed.
 
-The GitHub token reaches the Action's own GitHub reads, the scorer's GitHub reads and the label writes. It does not reach the Git fetch, and no code from the pull request ever runs. The scorer's environment is the same whether `publish-label` is on or off. Write requests go only to the label endpoints of the repository and PR number given as inputs, with label names taken from the constants above. Anyone with triage rights can still add a risk label by hand, so automation that acts on `low` must read the check's result for the exact head commit rather than trust the label.
+The GitHub token reaches the label-clearing step, the Action's own GitHub reads, the scorer's GitHub reads and the label writes. It does not reach the Git fetch, the scorer's `git` processes or the Node worker, and no code from the pull request ever runs. GitHub reads and label writes refuse HTTP redirects, so the token is never resent to another address; a redirect is a `github_error` or `label_error`. The scorer's environment is the same whether `publish-label` is on or off. Write requests go only to the label endpoints of the repository and PR number given as inputs, with label names taken from the constants above.
+
+### The label is advisory
+
+The label is a hint for reviewers, never an authorization. Triage-role users and any workflow with `issues: write` or `pull-requests: write` can set it. A consumer that skips review or merges on `low` must never read the label: it must take the result from the trusted `pull_request_target` run on the default branch and require `risk_label == "low"`, `model_label` present, scored head and base SHAs equal to the PR's current ones, base ref equal to the default branch, and the PR open and not a draft; it must merge with the head SHA pinned, and decide explicitly whether the author may be the only human involved. The full checklist and the caller workflow are in the [README](README.md#the-label-is-advisory-not-an-authorization).
+
+Known limits:
+
+- Retargeting a PR to a base branch that does not have the workflow stops the check from running, so a label can stay on later commits.
+- `pull-requests: write` also permits approving and commenting on pull requests, so repositories that will act on `low` should turn off "Allow GitHub Actions to create and approve pull requests" or split scoring and labelling into separate jobs.
+- The label is published only for repositories with a fact sheet.
+- More than one risk label on a PR must be treated as no label.
+- Any GitHub user can trigger runs. Use a dedicated Gateway key with a spend cap, and do not make this a required check.
 
 ## Evidence sent to Jev
 
