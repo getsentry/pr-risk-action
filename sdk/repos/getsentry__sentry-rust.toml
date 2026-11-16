@@ -45,6 +45,6 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  "clippy.toml", "rustfmt.toml", ".codecov.yml", ".mcp.json", ".zed/**", "agents.toml", "warden.toml",
+  "clippy.toml", "rustfmt.toml", ".codecov.yml", "agents.toml", "warden.toml",
 ]
 kind = "dev-tooling"

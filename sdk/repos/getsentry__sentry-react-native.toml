@@ -31,10 +31,12 @@ kind = "dependencies"
 
 # Anchored to the real test roots, so a test-named directory planted inside
 # shipping source (packages/core/src, android/src/main, ios) is not read as a test.
+# packages/core/android/src/test is not here: .npmignore re-includes /android/**/*, so it is in
+# the npm tarball and a customer's ./gradlew test compiles it.
 [[kind]]
 paths = [
   "packages/core/test/**", "packages/core/RNSentryAndroidTester/**",
-  "packages/core/RNSentryCocoaTester/**", "dev-packages/**", "packages/core/android/src/test/**",
+  "packages/core/RNSentryCocoaTester/**", "dev-packages/**",
   "packages/core/jest.config*.js", "packages/core/typings/jest-*.d.ts",
 ]
 kind = "tests"

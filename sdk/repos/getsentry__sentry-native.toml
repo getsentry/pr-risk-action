@@ -32,6 +32,9 @@ paths = [
   "ndk/**/*.gradle.kts", "ndk/*.gradle", "ndk/gradle.properties", "ndk/gradle/**", "ndk/gradlew",
   "ndk/gradlew.bat", "ndk/debug.keystore", "ndk/**/proguard-rules.pro", "ndk/**/CMakeLists.txt",
   "ndk/lib/src/main/AndroidManifest.xml",
+  # A standalone build defaults SENTRY_BUILD_TESTS and SENTRY_BUILD_EXAMPLES to on and
+  # add_subdirectory()s these, so they run at configure time on whoever builds the SDK.
+  "tests/**/CMakeLists.txt", "tests/**/*.cmake", "examples/**/CMakeLists.txt", "examples/**/*.cmake",
 ]
 kind = "build-release"
 

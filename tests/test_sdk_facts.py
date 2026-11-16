@@ -221,7 +221,8 @@ SPOT_CHECKS = [
     ("sentry-go", "client.go", "server", True, ""),
     ("sentry-go", "gin/sentrygin.go", "server", False, ""),
     ("sentry-go", "mock_transport.go", "server", True, ""),
-    ("sentry-go", "internal/testutils/mocks.go", "", False, "tests"),
+    ("sentry-go", "internal/testutils/mocks.go", "server", True, ""),
+    ("sentry-go", "internal/testutils/maps_test.go", "", False, "tests"),
     ("sentry-go", "_examples/basic/main.go", "", False, "samples"),
     ("sentry-go", "go.mod", "server", True, "dependencies"),
 
@@ -323,7 +324,7 @@ SPOT_CHECKS = [
     ("sentry-unity", "src/Sentry.Unity.Editor/Android/DebugSymbolUpload.cs", "hybrid tooling", False, ""),
     ("sentry-unity", "package-dev/Runtime/Sentry.Unity.Native.PlayStation.dll.meta", "hybrid", False, "build-release"),
     ("sentry-unity", "src/Sentry.Unity/SentryUnityOptions.cs", "browser hybrid mobile-native", True, ""),
-    ("sentry-unity", "samples/unity-of-bugs/ProjectSettings/ProjectVersion.txt", "", False, "samples"),
+    ("sentry-unity", "samples/unity-of-bugs/ProjectSettings/ProjectVersion.txt", "", False, "build-release samples"),
 
     ("sentry-unreal", "modules/sentry-native", "hybrid mobile-native", False, "dependencies"),
     ("sentry-unreal", "modules/sentry-cocoa.properties", "hybrid mobile-native", False, "dependencies"),
@@ -485,11 +486,13 @@ class PlantedDirectoryTest(unittest.TestCase):
                                          f"{variant} is tagged only {kinds}")
 
     def test_non_shipping_patterns_are_anchored(self):
-        # Only file-name patterns may match at any depth: Go keeps tests beside sources, and
-        # *.MD is docs by extension like defaults.toml's **/*.md.
-        any_depth = {("sentry-go", "**/*_test.go"), ("sentry-kotlin-multiplatform", "**/*.MD")}
-        for path in sorted((sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml")):
-            repo = path.stem.split("__", 1)[1]
+        # Only file-name patterns may match at any depth: Go keeps tests beside sources (the
+        # toolchain never compiles _test.go into a non-test build), and docs by extension.
+        any_depth = {("sentry-go", "**/*_test.go"), ("defaults", "**/*.md"), ("defaults", "**/*.MD"),
+                     ("defaults", "**/*.mdx")}
+        sheets = [sdk_facts.SDK_ROOT / "defaults.toml"] + sorted((sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml"))
+        for path in sheets:
+            repo = path.stem.split("__", 1)[1] if "__" in path.stem else path.stem
             for kind in sdk_facts._read_toml(path).get("kind", []):
                 if kind["kind"] not in sdk_facts.NON_SHIPPING_KINDS:
                     continue
@@ -508,6 +511,71 @@ class PlantedDirectoryTest(unittest.TestCase):
                 tags = tag_path(load_fact_sheet(f"getsentry/{repo}"), path)
                 self.assertNotIn("tests", tags["kinds"])
                 self.assertTrue(tags["families"])
+
+
+# Paths that run on a customer's or maintainer's machine, so they must block low.
+CODE_RUNNING_PATHS = [".githooks/pre-commit", "hooks/pre-commit", ".husky/pre-commit", "lefthook.yml", ".mcp.json",
+                      "pkg/.mcp.json", ".run/Tests.run.xml", ".zed/tasks.json", ".vscode/tasks.json",
+                      ".vscode/launch.json"]
+
+
+class ExecutedConfigurationTest(unittest.TestCase):
+    def test_defaults_tag_code_running_configuration_build_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "repos").mkdir()
+            (root / "defaults.toml").write_text((sdk_facts.SDK_ROOT / "defaults.toml").read_text())
+            (root / "repos" / "a__b.toml").write_text("")
+            sheet = load_fact_sheet("a/b", root)
+            for path in CODE_RUNNING_PATHS:
+                with self.subTest(path=path):
+                    self.assertIn("build-release", tag_path(sheet, path)["kinds"])
+            self.assertEqual(tag_path(sheet, ".vscode/settings.json")["kinds"], ["dev-tooling"])
+
+    def test_sheets_do_not_call_code_running_configuration_dev_tooling(self):
+        for path in sorted((sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml")):
+            for kind in sdk_facts._read_toml(path).get("kind", []):
+                if kind["kind"] != "dev-tooling":
+                    continue
+                for candidate in CODE_RUNNING_PATHS + [".githooks/x/y", "hooks/x/y", ".run/x/y", ".zed/x/y"]:
+                    with self.subTest(sheet=path.name, path=candidate):
+                        self.assertFalse(any(matches(p, candidate) for p in kind["paths"]))
+
+
+class FixWaveSpotCheckTest(unittest.TestCase):
+    def tags(self, repo, path):
+        return tag_path(load_fact_sheet(f"getsentry/{repo}"), path)
+
+    def test_native_test_and_example_cmake_scripts_run_at_configure_time(self):
+        for path in ("tests/unit/CMakeLists.txt", "tests/fixtures/crash_reporter/CMakeLists.txt",
+                     "tests/benchmark/CMakeLists.txt", "examples/x/CMakeLists.txt", "tests/x/helper.cmake"):
+            with self.subTest(path=path):
+                self.assertIn("build-release", self.tags("sentry-native", path)["kinds"])
+        self.assertEqual(self.tags("sentry-native", "tests/unit/test_basic.c")["kinds"], ["tests"])
+
+    def test_react_native_android_unit_tests_ship_in_the_npm_package(self):
+        tags = self.tags("sentry-react-native",
+                         "packages/core/android/src/test/java/io/sentry/react/RNSentryCaptureEnvelopeTest.java")
+        self.assertIn("hybrid", tags["families"])
+        self.assertNotIn("tests", tags["kinds"])
+
+    def test_go_internal_helpers_ship_but_their_tests_do_not(self):
+        self.assertEqual(self.tags("sentry-go", "internal/sentrytest/fixture.go")["kinds"], [])
+        self.assertEqual(self.tags("sentry-go", "internal/sentrytest/fixture_test.go")["kinds"], ["tests"])
+
+    def test_dart_flutter_config_is_only_the_detekt_baseline(self):
+        self.assertEqual(self.tags("sentry-dart", "packages/flutter/config/detekt-bl.xml")["kinds"], ["dev-tooling"])
+        self.assertNotIn("dev-tooling", self.tags("sentry-dart", "packages/flutter/config/other.yaml")["kinds"])
+
+    def test_published_authors_files_are_build_release(self):
+        for repo, path in (("sentry-php", "AUTHORS"), ("sentry-dart", "packages/dart/AUTHORS")):
+            with self.subTest(repo=repo):
+                kinds = self.tags(repo, path)["kinds"]
+                self.assertIn("build-release", kinds)
+                self.assertNotIn("docs", kinds)
+
+    def test_kotlin_multiplatform_md_files_are_docs_from_the_defaults(self):
+        self.assertEqual(self.tags("sentry-kotlin-multiplatform", "AGENTS.MD")["kinds"], ["docs"])
 
 
 class RolloutSheetSpotCheckTest(unittest.TestCase):

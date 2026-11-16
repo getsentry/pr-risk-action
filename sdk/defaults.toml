@@ -16,6 +16,15 @@ kind = "public-api-record"
 paths = [".gitmodules", "**/package.json", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/pyproject.toml", "**/setup.py", "**/setup.cfg", "**/requirements*.txt", "**/uv.lock", "**/poetry.lock", "**/go.mod", "**/go.sum", "**/Cargo.toml", "**/Cargo.lock", "**/Gemfile", "**/Gemfile.lock", "**/*.gemfile.lock", "**/gemfiles/**", "**/*.gemspec", "**/mix.exs", "**/mix.lock", "**/composer.json", "**/composer.lock", "**/*.csproj", "**/Directory.Packages.props", "**/Directory.Build.props", "**/libs.versions.toml", "**/Package.swift", "**/Package.resolved", "**/*.podspec", "**/pubspec.yaml", "**/pubspec.lock"]
 kind = "dependencies"
 
+# Developer configuration that executes code on a maintainer's machine: git hooks, MCP server
+# definitions and IDE run configurations. Blocking, so these never count as dev-tooling only.
+[[kind]]
+paths = [
+  ".githooks/**", "hooks/**", ".husky/**", "lefthook.yml", "**/.mcp.json", ".run/**", ".zed/**",
+  ".vscode/tasks.json", ".vscode/launch.json",
+]
+kind = "build-release"
+
 [[kind]]
 paths = [".claude/**", ".cursor/**", ".agents/**", ".pi/**", ".vscode/**", ".idea/**", ".pre-commit-config.yaml"]
 kind = "dev-tooling"

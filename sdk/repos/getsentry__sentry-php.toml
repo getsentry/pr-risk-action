@@ -24,13 +24,10 @@ shared_core = true
 paths = ["tests/**", "phpunit.xml.dist"]
 kind = "tests"
 
+# AUTHORS is not export-ignored in .gitattributes, so it is in the Composer dist archive.
 [[kind]]
-paths = ["scripts/**", "decision-model-linter/**"]
+paths = ["scripts/**", "decision-model-linter/**", "AUTHORS"]
 kind = "build-release"
-
-[[kind]]
-paths = ["AUTHORS"]
-kind = "docs"
 
 [[kind]]
 paths = [

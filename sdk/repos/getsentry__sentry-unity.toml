@@ -67,6 +67,8 @@ kind = "build-release"
 paths = [
   "scripts/**", "build/**", "bootstrap.ps1", "Directory.Build.targets", "**/Directory.Build.targets",
   "**/*.csproj", "**/*.props", "**/*.sln", "NuGet.config", "package-dev/Plugins/Android/*.pro",
+  # Directory.Build.props reads it to choose the Unity version the SDK is built with.
+  "samples/unity-of-bugs/ProjectSettings/ProjectVersion.txt",
 ]
 kind = "build-release"
 

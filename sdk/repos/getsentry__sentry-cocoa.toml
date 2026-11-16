@@ -41,7 +41,7 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  "linters/**", "skills/**", ".codex/**", ".xcodebuildmcp/**", ".mcp.json", ".clang-format",
+  "linters/**", "skills/**", ".codex/**", ".xcodebuildmcp/**", ".clang-format",
   ".swiftlint.yml", "Utils/VersionBump/.swiftlint.yml", "dprint.json", ".markdownlint-cli2.jsonc",
   ".spi.yml", "3rd-party-integrations/*/.spi.yml",
   ".git-blame-ignore-revs", "agents.toml", "warden.toml",

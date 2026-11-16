@@ -71,9 +71,5 @@ paths = [
 kind = "build-release"
 
 [[kind]]
-paths = ["config/detekt/**", "hooks/**", ".run/**"]
+paths = ["config/detekt/**"]
 kind = "dev-tooling"
-
-[[kind]]
-paths = ["**/*.MD"]
-kind = "docs"

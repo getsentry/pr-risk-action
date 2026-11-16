@@ -73,8 +73,7 @@ kind = "samples"
 
 [[kind]]
 paths = [
-  "packages/*/class-diagram.svg", "packages/link/screenshot.png", "packages/*/AUTHORS",
-  "packages/*/dartdoc_options.yaml",
+  "packages/*/class-diagram.svg", "packages/link/screenshot.png", "packages/*/dartdoc_options.yaml",
 ]
 kind = "docs"
 
@@ -84,6 +83,8 @@ paths = [
   "**/.pubignore", "**/.metadata", "**/PATENTS", "packages/flutter/ffi-native.yaml",
   "packages/flutter/sentry-native/*.cmake", "packages/flutter/linux/CMakeLists.txt",
   "packages/flutter/windows/CMakeLists.txt", "packages/flutter/android/*.gradle",
+  # No .pubignore excludes it, so it is in the published package.
+  "packages/*/AUTHORS",
   "packages/flutter/android/gradle.properties", "packages/flutter/android/gradle/**",
   "**/pubspec_overrides.yaml",
 ]
@@ -91,8 +92,8 @@ kind = "build-release"
 
 [[kind]]
 paths = [
-  ".githooks/**", ".fvmrc", ".ruby-version", "agents.toml", "warden.toml", "metrics/**",
+  ".fvmrc", ".ruby-version", "agents.toml", "warden.toml", "metrics/**",
   "packages/*/analysis_options.yaml", "scripts/*/analysis_options.yaml",
-  "packages/flutter/config/**",
+  "packages/flutter/config/detekt-bl.xml",
 ]
 kind = "dev-tooling"
