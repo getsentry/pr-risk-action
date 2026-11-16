@@ -62,13 +62,15 @@ The default context keeps the full title, description, file inventory and counts
 
 An explicit provider context rejection reduces the code prefix by half, then removes code if necessary. Transient errors retry the same request. There are **four provider attempts total**, with waits of **10, 20 and 30 seconds** before attempts two, three and four, including any context fallback. Each distinct request has its own hash and journal; all attempts contribute to accounting.
 
-Missing Git objects or required metadata, a broken SDK fact sheet or rubric (`invalid_fact_sheet`), invalid binary metadata, metadata that cannot fit even after compaction, or exhausted provider attempts produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Unknown usage or cost stays unknown. Truncation does not impose a risk class, and quality on partially visible changes still needs evaluation.
+Missing Git objects or required metadata, a broken SDK fact sheet or rubric (`invalid_fact_sheet`), an Action checkout without its `sdk/` data (`missing_sdk_data`), invalid binary metadata, metadata that cannot fit even after compaction, or exhausted provider attempts produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Unknown usage or cost stays unknown. Truncation does not impose a risk class, and quality on partially visible changes still needs evaluation.
 
 ## SDK repositories
 
 Repositories with a fact sheet under `sdk/repos/` in this Action are classified in SDK mode, which uses one shared rubric for Sentry SDKs, does not send the PR title or description, and records why the label was chosen. There is no input to set: adding or removing the fact sheet is what turns it on. Callers pick it up by moving to a newer pinned commit. See [SDK repositories](jev-risk-classification.md#sdk-repositories) for the rubric, rules, result fields and how to add a repository.
 
-In SDK mode, read `risk-label` (or `risk_label` in the JSON), not any other label field. A fact sheet or rubric file that cannot be loaded gives the status `invalid_fact_sheet` and no label.
+In SDK mode, read `risk-label` (or `risk_label` in the JSON), not any other label field. A fact sheet or rubric file that cannot be loaded gives the status `invalid_fact_sheet` and no label. A result whose status is not `ok` carries no label, model label, rules or mechanisms. Treat a `low` as gated by the SDK rules only when `model_label` is present in the result.
+
+SDK mode applies to the default `metadata-diff` input profile, which is what the Action uses. Other experimental input profiles and legacy variants ignore fact sheets.
 
 The `summary` output holds the same Markdown as the job summary. To post it as a PR comment, pass it through an environment variable and never put `${{ }}` inside a `run:` script, because the summary contains text derived from an untrusted pull request. This needs `pull-requests: write` in the caller workflow, which the Action itself does not need.
 

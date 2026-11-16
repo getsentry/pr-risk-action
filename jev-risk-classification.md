@@ -24,6 +24,8 @@ A repository is in SDK mode when the Action contains `sdk/repos/<owner>__<repo>.
 
 If a fact sheet or `sdk/rubric.toml` cannot be loaded or fails validation, the result has status `invalid_fact_sheet` and no label.
 
+SDK mode applies to the default `metadata-diff` input profile, which is what the Action uses. Other experimental input profiles and legacy variants ignore fact sheets.
+
 The first fact sheets cover sentry-java, sentry-javascript, sentry-python, sentry-dotnet, sentry-cocoa and sentry-react-native.
 
 ### What the levels mean
@@ -73,6 +75,10 @@ The model is always called. Every rule that fires is recorded in `low_blocked_by
 - `mechanisms`: for each risk mechanism, the model's probability from a yes/no question asked in the same request (`m_stability`, `m_performance`, `m_contract`, `m_data`, `m_inherited`, `m_reach`, `m_ships`). A response that lacks any of them is `invalid_response` with no label.
 - `sdk`: the rubric version, a hash of the fact sheet and defaults, `families_touched`, `shared_core`, and per-file families, kinds and `unmapped`.
 
+A result whose status is not `ok` carries no label, model label, rules or mechanisms: `risk_label` is null, and `model_label`, `low_blocked_by` and `mechanisms` are absent or null. This covers a model response that failed validation and, in the Action, a result discarded because the pull request moved during scoring or the result failed the Action's own checks. Only `sdk`, the path facts, may remain.
+
+A consumer must treat a `low` as having passed the rules only when `model_label` is present in the result. A `low` without `model_label` did not come from SDK mode and was not gated by R1–R7.
+
 The per-attempt log inside a result (`attempts`) keeps the model's raw label. Read the top-level `risk_label`, not an attempt's.
 
 Mechanism answers are shown in the summary and recorded, but they do not change the label. Jev returns probabilities, not written reasoning, so the summary explains a label with the facts instead: the final and model labels, the families touched, each rule that fired with up to five of its files, and the mechanism probabilities, highest first. The SDK explanation comes before the closing disclaimer.
@@ -80,7 +86,7 @@ Mechanism answers are shown in the summary and recorded, but they do not change 
 ### Adding a repository
 
 1. Write `sdk/repos/<owner>__<repo>.toml` (lower case) with `[[area]]` and `[[kind]]` tables, reading the repository's layout. Use patterns rather than lists so new modules need no edit.
-2. In a clone of the repository, run `git ls-files | risk-pr sdk-coverage --repo OWNER/NAME` until it exits 0. It prints counts per family and kind and lists unmapped paths; exit status 1 means some are unmapped, 2 means no fact sheet was found.
+2. In a clone of the repository, run `git ls-files | risk-pr sdk-coverage --repo OWNER/NAME` until it exits 0. It prints counts per family and kind and lists unmapped paths; exit status 1 means some are unmapped, 2 means no fact sheet was found. Exit status 1 also covers a fact sheet or `sdk/defaults.toml` that fails to load or validate; the reason is printed on stderr.
 3. Add spot-check tests in `tests/test_sdk_facts.py` for the paths that matter most (shared core, public API records, samples, build files).
 
 Never give a non-shipping kind (`tests`, `samples`, `docs`, `dev-tooling`) to something that ships, such as a published test-support module or docs that carry runnable configuration. Such a file would stop counting towards its families and could be labelled low. A stale sheet fails safe: new paths are unmapped, which blocks low through R3, but someone must keep sheets current.
