@@ -29,11 +29,13 @@ paths = [
 ]
 kind = "dependencies"
 
+# Anchored to the real test roots, so a test-named directory planted inside
+# shipping source (packages/core/src, android/src/main, ios) is not read as a test.
 [[kind]]
 paths = [
   "packages/core/test/**", "packages/core/RNSentryAndroidTester/**",
-  "packages/core/RNSentryCocoaTester/**", "dev-packages/**", "**/src/test/**", "**/jest.config*.js",
-  "packages/core/typings/jest-*.d.ts",
+  "packages/core/RNSentryCocoaTester/**", "dev-packages/**", "packages/core/android/src/test/**",
+  "packages/core/jest.config*.js", "packages/core/typings/jest-*.d.ts",
 ]
 kind = "tests"
 
@@ -53,7 +55,7 @@ kind = "build-release"
 
 [[kind]]
 paths = [
-  ".oxfmtrc.json", "**/.oxlintrc.json", "**/.clang-format", "**/.swiftlint.yml", "agents.toml",
+  ".oxfmtrc.json", "packages/*/.oxlintrc.json", ".clang-format", ".swiftlint.yml", "agents.toml",
   "warden.toml",
 ]
 kind = "dev-tooling"

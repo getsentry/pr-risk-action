@@ -44,9 +44,12 @@ paths = ["pnpm-lock.yaml"]
 families = ["browser", "server", "tooling"]
 shared_core = true
 
+# Anchored to each package's own root, so a test-named directory planted
+# inside packages/*/src is not read as a test.
 [[kind]]
 paths = [
-  "**/test/**", "packages/*/tests/**", "**/tsconfig.test.json", "**/vitest.config*",
+  "packages/*/test/**", "packages/*/tests/**", "packages/*/tsconfig.test.json",
+  "packages/*/vitest.config*", "dev-packages/*/tsconfig.test.json", "dev-packages/*/vitest.config*",
   "packages/*/setup-test.ts", "packages/*/patch-vitest.ts", "dev-packages/*-tests/**",
   "dev-packages/e2e-tests/**", "dev-packages/test-utils/**",
 ]
@@ -71,7 +74,8 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  "**/.oxlintrc*.json", ".oxfmtrc.json", "**/eslint.config.mjs", ".size-limit.js",
+  ".oxlintrc*.json", "packages/*/.oxlintrc*.json", "dev-packages/.oxlintrc*.json",
+  "dev-packages/*/.oxlintrc*.json", ".oxfmtrc.json", "packages/*/eslint.config.mjs", ".size-limit.js",
   ".secret_scan_ignore", ".git-blame-ignore-revs", "agents.toml", "agents.lock", "warden.toml",
 ]
 kind = "dev-tooling"

@@ -90,5 +90,5 @@ paths = ["docs/**"]
 kind = "docs"
 
 [[kind]]
-paths = ["**/.clang-format", "warden.toml", "agents.toml"]
+paths = [".clang-format", "warden.toml", "agents.toml"]
 kind = "dev-tooling"

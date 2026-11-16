@@ -35,8 +35,10 @@ paths = ["sentry-samples/**"]
 kind = "samples"
 
 [[kind]]
+# Anchored to the Gradle modules' own source sets, so a test-named directory
+# planted inside src/main is not read as a test.
 paths = [
-  "**/src/test/**", "**/src/*Test/**", "**/src/*Test*/**", "**/src/agentFixture/**",
+  "*/src/test/**", "*/src/*Test*/**", "*/src/agentFixture/**", "sentry-opentelemetry/*/src/test/**",
   "sentry-android-integration-tests/**",
 ]
 kind = "tests"
@@ -60,7 +62,7 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  "detekt.yml", "**/detekt-baseline.xml", "hooks/**", "agents.toml", "warden.toml",
+  "detekt.yml", "*/detekt-baseline.xml", "hooks/**", "agents.toml", "warden.toml",
   ".git-blame-ignore-revs",
 ]
 kind = "dev-tooling"

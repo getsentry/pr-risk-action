@@ -108,5 +108,5 @@ paths = [
 kind = "samples"
 
 [[kind]]
-paths = ["**/.clang-format", "warden.toml", "agents.toml"]
+paths = [".clang-format", "warden.toml", "agents.toml"]
 kind = "dev-tooling"

@@ -80,6 +80,7 @@ kind = "build-release"
 
 [[kind]]
 paths = [
-  "**/*.DotSettings", ".codecov.yml", ".githooks/**", "dev.cs", "agents.toml", "warden.toml",
+  "*.DotSettings", "src/*/*.DotSettings", ".codecov.yml", ".githooks/**", "dev.cs", "agents.toml",
+  "warden.toml",
 ]
 kind = "dev-tooling"

@@ -65,5 +65,5 @@ paths = ["sample/**"]
 kind = "samples"
 
 [[kind]]
-paths = ["**/.clang-format", "warden.toml", "agents.toml", "CLAUDE.md"]
+paths = [".clang-format", "warden.toml", "agents.toml", "CLAUDE.md"]
 kind = "dev-tooling"

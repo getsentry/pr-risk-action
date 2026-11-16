@@ -17,7 +17,7 @@ shared_core = true
 
 [[kind]]
 paths = [
-  "sentry-*/spec/**", "sentry-*/benchmarks/**", "sentry-*/test-matrix.json", "**/.rspec",
+  "sentry-*/spec/**", "sentry-*/benchmarks/**", "sentry-*/test-matrix.json", ".rspec", "sentry-*/.rspec",
   "spec/**", "lib/sentry/test/**",
 ]
 kind = "tests"
@@ -35,11 +35,11 @@ paths = [
 kind = "build-release"
 
 [[kind]]
-paths = ["**/.yardopts"]
+paths = ["sentry-*/.yardopts"]
 kind = "docs"
 
 [[kind]]
 paths = [
-  "**/.rubocop.yml", "codecov.yml", "sentry-ruby.code-workspace", "agents.toml", "warden.toml",
+  ".rubocop.yml", "codecov.yml", "sentry-ruby.code-workspace", "agents.toml", "warden.toml",
 ]
 kind = "dev-tooling"

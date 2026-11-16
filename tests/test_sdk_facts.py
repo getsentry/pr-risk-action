@@ -390,6 +390,126 @@ class DependencyManifestAreaTest(unittest.TestCase):
                     self.assertTrue(tags["families"])
 
 
+# Shipped-source spot checks of the six earlier sheets; the rollout sheets' come from SPOT_CHECKS.
+SHIPPED_SOURCE_PATHS = {
+    "sentry-java": ["sentry/src/main/java/io/sentry/Sentry.java",
+                    "sentry-android-core/src/main/java/io/sentry/android/core/X.java",
+                    "sentry-servlet/src/main/java/io/sentry/servlet/X.java",
+                    "sentry-test-support/src/main/kotlin/io/sentry/test/X.kt"],
+    "sentry-javascript": ["packages/core/src/index.ts", "packages/nextjs/src/index.types.ts",
+                          "packages/browser/src/index.ts", "packages/node/src/index.ts",
+                          "packages/vite-plugin/src/index.ts"],
+    "sentry-python": ["sentry_sdk/integrations/django/__init__.py", "sentry_sdk/client.py"],
+    "sentry-dotnet": ["src/Sentry.Maui/SentryMauiAppBuilderExtensions.cs", "src/Sentry/SentrySdk.cs",
+                      "src/Sentry.AspNetCore/SentryMiddleware.cs"],
+    "sentry-cocoa": ["Sources/Swift/Helper/SentrySDK.swift"],
+    "sentry-react-native": ["packages/core/src/js/index.ts", "packages/core/ios/RNSentry.mm",
+                            "packages/core/metro.js"],
+}
+for _repo, _path, _families, _shared, _kinds in SPOT_CHECKS:
+    if _families and not _kinds:
+        SHIPPED_SOURCE_PATHS.setdefault(_repo, []).append(_path)
+
+# Directory names an author could plant inside a shipping source tree to have a file read as non-shipping.
+PLANTED_SEGMENTS = ("test", "tests", "src/test", "__tests__", "spec", "samples", "sample", "examples", "docs",
+                    "testing", "fixtures")
+
+# Variants that are real non-shipping locations in that repository, so tagging them non-shipping is right.
+REAL_NON_SHIPPING_VARIANTS = {
+    # <module>/src/test is each Gradle module's real test source set.
+    ("sentry-java", "sentry/src/test/main/java/io/sentry/Sentry.java"),
+    ("sentry-java", "sentry-android-core/src/test/main/java/io/sentry/android/core/X.java"),
+    ("sentry-java", "sentry-servlet/src/test/main/java/io/sentry/servlet/X.java"),
+    ("sentry-java", "sentry-test-support/src/test/main/kotlin/io/sentry/test/X.kt"),
+    # The Gradle plugin module's real test source set.
+    ("sentry-kotlin-multiplatform",
+     "sentry-kotlin-multiplatform-gradle-plugin/src/test/main/java/io/sentry/kotlin/multiplatform/gradle/SentryPlugin.kt"),
+    # ndk/lib/src/test is the NDK library's real unit-test source set.
+    ("sentry-native", "ndk/lib/src/test/src/main/jni/sentry.c"),
+    # packages/core/test is the package's real Jest test root (metro.js sits in packages/core).
+    ("sentry-react-native", "packages/core/test/metro.js"),
+    # <crate>/examples and <crate>/tests are Cargo's real example and integration-test roots.
+    ("sentry-rust", "sentry-contexts/examples/build.rs"),
+    ("sentry-rust", "sentry-contexts/tests/build.rs"),
+}
+
+
+def _area_root_depth(sheet, path):
+    """Segments of the deepest matching area pattern before its first ``**``."""
+    depths = []
+    for area in sheet["areas"]:
+        for pattern in area["paths"]:
+            if matches(pattern, path):
+                segments = pattern.split("/")
+                depths.append(segments.index("**") if "**" in segments else len(segments) - 1)
+    return max(depths)
+
+
+def planted_variants(sheet, path):
+    parts = path.split("/")
+    inside = _area_root_depth(sheet, path) + 1  # just after the first segment inside the area
+    variants = set()
+    for segment in PLANTED_SEGMENTS:
+        variants.add("/".join(parts[:-1] + [segment, parts[-1]]))
+        if inside < len(parts):
+            variants.add("/".join(parts[:inside] + [segment] + parts[inside:]))
+    return sorted(variants)
+
+
+class PlantedDirectoryTest(unittest.TestCase):
+    """A test- or sample-named directory created inside shipping source must not drop its families."""
+
+    def test_every_sheet_has_shipped_source_spot_checks(self):
+        shipped = sorted(p.stem.split("__", 1)[1] for p in (sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml"))
+        self.assertEqual(sorted(SHIPPED_SOURCE_PATHS), shipped)
+
+    def test_spot_checks_are_shipped_source(self):
+        for repo, paths in SHIPPED_SOURCE_PATHS.items():
+            sheet = load_fact_sheet(f"getsentry/{repo}")
+            for path in paths:
+                with self.subTest(repo=repo, path=path):
+                    tags = tag_path(sheet, path)
+                    self.assertTrue(tags["families"])
+                    self.assertEqual(tags["kinds"], [])
+
+    def test_planted_directories_keep_shipping_tags(self):
+        for repo, paths in sorted(SHIPPED_SOURCE_PATHS.items()):
+            sheet = load_fact_sheet(f"getsentry/{repo}")
+            for path in paths:
+                for variant in planted_variants(sheet, path):
+                    if (repo, variant) in REAL_NON_SHIPPING_VARIANTS:
+                        continue
+                    with self.subTest(repo=repo, variant=variant):
+                        kinds = tag_path(sheet, variant)["kinds"]
+                        self.assertFalse(kinds and all(kind in sdk_facts.NON_SHIPPING_KINDS for kind in kinds),
+                                         f"{variant} is tagged only {kinds}")
+
+    def test_non_shipping_patterns_are_anchored(self):
+        # Only file-name patterns may match at any depth: Go keeps tests beside sources, and
+        # *.MD is docs by extension like defaults.toml's **/*.md.
+        any_depth = {("sentry-go", "**/*_test.go"), ("sentry-kotlin-multiplatform", "**/*.MD")}
+        for path in sorted((sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml")):
+            repo = path.stem.split("__", 1)[1]
+            for kind in sdk_facts._read_toml(path).get("kind", []):
+                if kind["kind"] not in sdk_facts.NON_SHIPPING_KINDS:
+                    continue
+                for pattern in kind["paths"]:
+                    if (repo, pattern) in any_depth:
+                        continue
+                    with self.subTest(repo=repo, pattern=pattern):
+                        self.assertFalse(pattern.startswith("**") or "/**/" in pattern)
+
+    def test_known_planted_paths_from_the_review(self):
+        for repo, path in (("sentry-java", "sentry/src/main/java/io/sentry/src/test/Evil.java"),
+                           ("sentry-javascript", "packages/core/src/test/evil.ts"),
+                           ("sentry-javascript", "packages/core/src/utils/test/index.ts"),
+                           ("sentry-react-native", "packages/core/android/src/main/java/io/sentry/src/test/Evil.java")):
+            with self.subTest(repo=repo, path=path):
+                tags = tag_path(load_fact_sheet(f"getsentry/{repo}"), path)
+                self.assertNotIn("tests", tags["kinds"])
+                self.assertTrue(tags["families"])
+
+
 class RolloutSheetSpotCheckTest(unittest.TestCase):
     def test_spot_checks(self):
         for repo, path, families, shared_core, kinds in SPOT_CHECKS:

@@ -72,7 +72,10 @@ paths = ["packages/*/example/**", "packages/*/example_web/**"]
 kind = "samples"
 
 [[kind]]
-paths = ["**/class-diagram.svg", "packages/link/screenshot.png", "**/AUTHORS", "**/dartdoc_options.yaml"]
+paths = [
+  "packages/*/class-diagram.svg", "packages/link/screenshot.png", "packages/*/AUTHORS",
+  "packages/*/dartdoc_options.yaml",
+]
 kind = "docs"
 
 [[kind]]
@@ -89,6 +92,7 @@ kind = "build-release"
 [[kind]]
 paths = [
   ".githooks/**", ".fvmrc", ".ruby-version", "agents.toml", "warden.toml", "metrics/**",
-  "**/analysis_options.yaml", "packages/flutter/config/**",
+  "packages/*/analysis_options.yaml", "scripts/*/analysis_options.yaml",
+  "packages/flutter/config/**",
 ]
 kind = "dev-tooling"

@@ -21,7 +21,7 @@ kind = "samples"
 # are internal packages imported only from _test.go files and from each other.
 [[kind]]
 paths = [
-  "**/*_test.go", "**/testdata/**", "crosstest/**",
+  "**/*_test.go", "testdata/**", "crosstest/**",
   "internal/testutils/**", "internal/sentrytest/**",
 ]
 kind = "tests"

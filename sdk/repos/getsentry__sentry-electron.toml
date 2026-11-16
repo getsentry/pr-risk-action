@@ -48,5 +48,5 @@ paths = [
 kind = "build-release"
 
 [[kind]]
-paths = [".oxfmtrc.json", "**/.oxlintrc.json", "test/tslint.json"]
+paths = [".oxfmtrc.json", ".oxlintrc.json", "test/tslint.json"]
 kind = "dev-tooling"

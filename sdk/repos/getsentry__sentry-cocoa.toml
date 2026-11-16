@@ -34,13 +34,16 @@ paths = ["TestApps/**"]
 kind = "samples"
 
 [[kind]]
-paths = ["develop-docs/**", "docs/**", "**/*.docc/**", "sentry-spec-compliance.json"]
+paths = [
+  "develop-docs/**", "docs/**", "3rd-party-integrations/*/Sources/*.docc/**", "sentry-spec-compliance.json",
+]
 kind = "docs"
 
 [[kind]]
 paths = [
   "linters/**", "skills/**", ".codex/**", ".xcodebuildmcp/**", ".mcp.json", ".clang-format",
-  "**/.swiftlint.yml", "dprint.json", ".markdownlint-cli2.jsonc", "**/.spi.yml",
+  ".swiftlint.yml", "Utils/VersionBump/.swiftlint.yml", "dprint.json", ".markdownlint-cli2.jsonc",
+  ".spi.yml", "3rd-party-integrations/*/.spi.yml",
   ".git-blame-ignore-revs", "agents.toml", "warden.toml",
 ]
 kind = "dev-tooling"
