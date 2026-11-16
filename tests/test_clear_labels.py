@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -42,6 +43,15 @@ def step_env(block):
 
 
 class ClearLabelsMainTests(CheckedFakes, unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.summary = Path(temporary.name) / "summary"
+        self.summary.write_text("")
+        summary = patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(self.summary)})
+        summary.start()
+        self.addCleanup(summary.stop)
+
     def run_main(self, environment, fake=None):
         stream = io.StringIO()
         with patch.dict(os.environ, environment), \
@@ -80,6 +90,31 @@ class ClearLabelsMainTests(CheckedFakes, unittest.TestCase):
                 self.assertNotEqual(code, 0)
                 self.assertIn(status, output)
                 transport.assert_not_called()
+
+    def test_failure_leaves_one_summary_line_naming_the_status(self):
+        cases = [({"INPUT_REPO": "example/..", "INPUT_PR_NUMBER": "7"}, None, "invalid_repository"),
+                 ({"INPUT_REPO": "example/project", "INPUT_PR_NUMBER": "07"}, None, "invalid_pr_number"),
+                 ({"INPUT_REPO": "example/project", "INPUT_PR_NUMBER": "7",
+                   "GITHUB_SERVER_URL": "https://ghe.example.invalid"}, None, "unsupported_repository"),
+                 ({"INPUT_REPO": "example/project", "INPUT_PR_NUMBER": "7"},
+                  lambda: self.fake(pr_labels={"risk: low"}, fail=lambda method, url, body: 403), "label_error")]
+        for environment, fake, status in cases:
+            with self.subTest(status=status):
+                self.summary.write_text("")
+                code, _, _ = self.run_main({"GITHUB_SERVER_URL": "https://github.com", **environment},
+                                           fake() if fake else None)
+                self.assertEqual(code, 1)
+                lines = self.summary.read_text().splitlines()
+                self.assertEqual(len(lines), 1)
+                self.assertIn(f"`{status}`", lines[0])
+                self.assertNotIn("example", lines[0])
+
+    def test_success_writes_no_summary(self):
+        fake = self.fake(pr_labels={"risk: low"})
+        code, _, _ = self.run_main({"INPUT_REPO": "example/project", "INPUT_PR_NUMBER": "7",
+                                    "GITHUB_SERVER_URL": "https://github.com"}, fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.summary.read_text(), "")
 
     def test_validation_is_the_one_run_action_uses(self):
         from risk_pr_agent import action_runner

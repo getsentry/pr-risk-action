@@ -88,6 +88,21 @@ def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
     return json.loads(output.read_text(encoding="utf-8"))
 
 
+def _consumer_outputs(result: Dict[str, Any]) -> Dict[str, str]:
+    """The model label and scored revision, validated; empty unless the result is ``ok``."""
+    values = {"model_label": "", "head_sha": "", "base_sha": ""}
+    if result.get("status") != "ok":
+        return values
+    if _gated(result):
+        values["model_label"] = result["model_label"]
+    snapshot = result.get("snapshot") if isinstance(result.get("snapshot"), dict) else {}
+    for key, field in (("head_sha", "source_head_sha"), ("base_sha", "source_base_sha")):
+        value = snapshot.get(field)
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value):
+            values[key] = value
+    return values
+
+
 def _publish(result: Dict[str, Any], result_path: str, label_published: bool = False,
              label_cleanup_failed: bool = False, label_skipped: bool = False) -> None:
     output = Path(result_path)
@@ -111,6 +126,8 @@ def _publish(result: Dict[str, Any], result_path: str, label_published: bool = F
             while delimiter in summary:
                 delimiter = secrets.token_hex(16)
             handle.write(f"summary<<{delimiter}\n{summary.rstrip(chr(10))}\n{delimiter}\n")
+            for key, value in _consumer_outputs(result).items():
+                handle.write(f"{key}={value}\n")
             handle.write(f"label_published={'true' if label_published else 'false'}\n")
     print(summary)
 

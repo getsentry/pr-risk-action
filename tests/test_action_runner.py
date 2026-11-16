@@ -365,6 +365,87 @@ class ActionRunnerTests(RunnerTestCase):
         self.assertTrue(all(not path.exists() for path in temporary_paths))
 
 
+def output_values(text):
+    """Single-line outputs from a GITHUB_OUTPUT file (the summary block is skipped)."""
+    values, lines = {}, iter(text.splitlines())
+    for line in lines:
+        if "<<" in line and "=" not in line.split("<<", 1)[0]:
+            delimiter = line.split("<<", 1)[1]
+            for inner in lines:
+                if inner == delimiter:
+                    break
+            continue
+        key, _, value = line.partition("=")
+        values.setdefault(key, []).append(value)
+    return values
+
+
+class ConsumerOutputTests(CheckedFakes, RunnerTestCase):
+    def run_scored(self, scored, publish_label, responses=None):
+        for path in ("summary", "output"):
+            (self.directory / path).write_text("")
+        with patch.object(labels, "default_transport", return_value=self.fake()), \
+                patch.object(labels.time, "sleep"), \
+                patch.object(action_runner.GitHubClient, "get_pull_request",
+                             side_effect=responses or [pull_request()] * 4), \
+                patch.object(action_runner, "_fetch_git"), \
+                patch.object(action_runner, "_run_scorer", return_value=copy.deepcopy(scored)):
+            code, result, _ = self.invoke(expected=HEAD, publish_label=publish_label)
+        return code, result, output_values((self.directory / "output").read_text())
+
+    def test_sdk_result_exposes_model_label_and_scored_revision(self):
+        scored = sdk_classification("medium")
+        for publish_label in (False, True):
+            with self.subTest(publish_label=publish_label):
+                code, _, values = self.run_scored(scored, publish_label)
+                self.assertEqual(code, 0)
+                self.assertEqual(values["model_label"], ["low"])
+                self.assertEqual(values["head_sha"], [HEAD])
+                self.assertEqual(values["base_sha"], [BASE])
+                self.assertEqual(values["risk_label"], ["medium"])
+
+    def test_default_mode_result_has_no_model_label_but_has_the_revision(self):
+        code, _, values = self.run_scored(classification(), False)
+        self.assertEqual(code, 0)
+        self.assertEqual((values["model_label"], values["head_sha"], values["base_sha"]), ([""], [HEAD], [BASE]))
+
+    def test_unclassified_result_exposes_nothing(self):
+        code, _, values = self.run_scored(sdk_classification(), False,
+                                          responses=[pull_request(), pull_request(head="d" * 40)])
+        self.assertEqual(code, 1)
+        self.assertEqual((values["status"], values["model_label"], values["head_sha"], values["base_sha"]),
+                         (["pr_changed"], [""], [""], [""]))
+
+    def test_early_exit_writes_empty_values(self):
+        with patch.dict(os.environ, {"AI_GATEWAY_API_KEY": ""}):
+            self.invoke()
+        values = output_values((self.directory / "output").read_text())
+        self.assertEqual((values["model_label"], values["head_sha"], values["base_sha"]), ([""], [""], [""]))
+
+    def test_values_are_validated_before_writing(self):
+        result = sdk_classification()
+        result.update(model_label="low\nstatus=ok", snapshot={"source_head_sha": "b" * 39 + "\n",
+                                                             "source_base_sha": "not-a-sha"})
+        (self.directory / "output").write_text("")
+        action_runner._publish(result, "result.json")
+        values = output_values((self.directory / "output").read_text())
+        self.assertEqual((values["model_label"], values["head_sha"], values["base_sha"]), ([""], [""], [""]))
+        self.assertEqual(values["status"], ["ok"])
+
+    def test_outputs_keep_their_order_and_end_with_label_published(self):
+        self.run_scored(sdk_classification(), False)
+        text = (self.directory / "output").read_text()
+        self.assertTrue(text.startswith("risk_label=low\nstatus=ok\nsummary<<"))
+        self.assertTrue(text.endswith(f"\nmodel_label=low\nhead_sha={HEAD}\nbase_sha={BASE}\nlabel_published=false\n"))
+
+    def test_action_declares_the_outputs(self):
+        text = (action_runner.SOURCE_ROOT / "action.yml").read_text(encoding="utf-8")
+        for name, key in (("model-label", "model_label"), ("head-sha", "head_sha"), ("base-sha", "base_sha")):
+            with self.subTest(name=name):
+                self.assertIn(f"  {name}:\n", text)
+                self.assertIn(f"value: ${{{{ steps.score.outputs.{key} }}}}", text)
+
+
 class LabelPublishingTests(CheckedFakes, RunnerTestCase):
     def run_enabled(self, fake, scored=None, responses=None, events=None):
         events = fake.events if events is None else events

@@ -89,6 +89,14 @@ jobs:
           pr-number: ${{ github.event.pull_request.number }}
           expected-head-sha: ${{ github.event.pull_request.head.sha }}
           publish-label: true
+
+      - name: Upload risk result
+        if: always()
+        uses: actions/upload-artifact@<full commit SHA>
+        with:
+          name: pr-risk-result
+          path: risk-pr-result.json
+          retention-days: 30
 ```
 
 - `permissions: {}` at the top and the two permissions on the one job. Do not set the GitHub token or the Gateway key at workflow or job level; keep the key on the one step.
@@ -99,7 +107,7 @@ jobs:
 - Pre-create the three labels so the job never needs to create one, and remove the caller's own label script so only one writer exists.
 - Keep `workflow_dispatch` out of this workflow if the result will gate review; it runs without `expected-head-sha`.
 
-The Action's first step, before Python, Node or any dependency is set up, removes all three risk labels using the runner's own `python3` and the standard library. If it cannot remove them, the job fails and nothing is scored. The scoring step clears them again before scoring. The Action then adds the final `risk-label` (never the model label) only when the result is `ok`, the repository has an SDK fact sheet (the result has `model_label`), and the PR is still open at the scored base and head; it removes the other two risk labels just before adding and checks the PR again after adding. A repository without a fact sheet gets no label: the result records `label_skipped: "no_fact_sheet"` and the summary says so. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. If removing a label the run just added fails three times, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR until the next run clears it. See [Label publishing](jev-risk-classification.md#label-publishing).
+The Action's first step, before Python, Node or any dependency is set up, removes all three risk labels using the runner's own `python3` and the standard library. If the inputs are invalid or it cannot remove them, it adds one line naming the status to the job summary, the job fails and nothing is scored. The scoring step clears them again before scoring. The Action then adds the final `risk-label` (never the model label) only when the result is `ok`, the repository has an SDK fact sheet (the result has `model_label`), and the PR is still open at the scored base and head; it removes the other two risk labels just before adding and checks the PR again after adding. A repository without a fact sheet gets no label: the result records `label_skipped: "no_fact_sheet"` and the summary says so. A run that ends in any other status leaves the PR without a risk label: `label_error` when a label request fails, `pr_changed` when the PR moved or closed. If removing a label the run just added fails three times, the status is `label_error`, the result records `label_cleanup_failed: true`, and the summary says a risk label may still be on the PR until the next run clears it. See [Label publishing](jev-risk-classification.md#label-publishing).
 
 **Replacing a label script in the caller workflow.** Delete the caller's own label step, switch to the workflow above and set `publish-label: true`. The Action clears the old label at the start of every run.
 
@@ -107,13 +115,16 @@ The Action's first step, before Python, Node or any dependency is set up, remove
 
 A risk label is a hint for reviewers. Triage-role users and any workflow with `issues: write` or `pull-requests: write` can set it, and it can outlive the revision it was computed for (see the limits below). Never let a label approve, merge or skip review of a PR.
 
-What a skip-review or auto-merge consumer must check:
+What a skip-review or auto-merge consumer must check. Every check uses the step outputs or the JSON result of the trusted run, compared with the PR's current state from the GitHub API:
 
 1. Never read the label.
-2. Take the result from the trusted workflow run itself: event `pull_request_target`, this workflow file, on the default branch. A successful job only means status `ok`, not `low`, so read `risk-label`, `label-published` and the scored SHAs. Do not look up artifacts by name alone: a fork `pull_request` run can upload an artifact with the same name.
-3. Require `risk_label == "low"`, `model_label` present, `snapshot.source_head_sha` equal to the PR's current head, `snapshot.source_base_sha` equal to its current base, base ref equal to the default branch, and the PR open and not a draft.
-4. Merge or approve with the head SHA pinned (the merge API's `sha` parameter), so a push between the check and the action fails.
-5. Decide explicitly whether the author may be the only human involved. The author writes everything the classifier sees, so a `low` should reduce review effort, not replace the second reviewer.
+2. Take the outputs, or the uploaded `pr-risk-result` artifact, from the trusted workflow run itself: event `pull_request_target`, this workflow file, on the default branch, found by its run ID. Do not look up artifacts by name alone: a fork `pull_request` run can upload an artifact with the same name. A successful job only means status `ok`, not `low`.
+3. Require `status == 'ok'`, `risk-label == 'low'` and a non-empty `model-label` (JSON: `status`, `risk_label`, `model_label`). With `publish-label: true`, also require `label-published == 'true'`.
+4. Require `head-sha` and `base-sha` (JSON: `snapshot.source_head_sha`, `snapshot.source_base_sha`) to equal the PR's current head and base, the PR's base ref to be the default branch, and the PR to be open and not a draft.
+5. Merge or approve with `head-sha` pinned (the merge API's `sha` parameter), so a push between the check and the action fails.
+6. Decide explicitly whether the author may be the only human involved. The author writes everything the classifier sees, so a `low` should reduce review effort, not replace the second reviewer.
+
+`label-published == 'true'` is the only output that by itself implies a result gated by the SDK rules: it is true only for an `ok` SDK-mode result whose label was added to the unchanged PR. `status` and `risk-label` alone do not: for a repository without a fact sheet, `risk-label` may read `low` with no rules applied, and `model-label` is then empty.
 
 Known limits:
 
@@ -126,7 +137,7 @@ Known limits:
 
 ## Result
 
-The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label`, `status`, `summary` and `label-published` outputs. `label-published` is `true` only when the Action added the risk label to the unchanged PR, and `false` otherwise, including when `publish-label` is off. With `publish-label: true` the JSON also carries `label_published`, and `label_skipped: "no_fact_sheet"` when an `ok` result got no label because the repository has no SDK fact sheet. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
+The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes these outputs: `risk-label` (the final label), `status`, `summary`, `label-published`, `model-label` (the model's label before the SDK rules; empty unless the result is an `ok` SDK-mode result), and `head-sha` and `base-sha` (the scored commits; empty unless the status is `ok`). The three new values are validated before they are written: a label from the three classes and 40-hex-character SHAs. `label-published` is `true` only when the Action added the risk label to the unchanged PR, and `false` otherwise, including when `publish-label` is off. With `publish-label: true` the JSON also carries `label_published`, and `label_skipped: "no_fact_sheet"` when an `ok` result got no label because the repository has no SDK fact sheet. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.
 
 Binary and non-UTF-8 changes are supported, including PRs containing only binaries. Jev receives paths, change status, Git headers, and the size and SHA-256 of each available side. Binary bytes and encoded Git payloads are excluded; readable text sides of text/binary conversions share the code context budget. The request and JSON result identify the binary sides whose contents were not inspected. Binary presence alone does not impose a risk class.
 

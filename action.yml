@@ -31,6 +31,15 @@ outputs:
   summary:
     description: Markdown summary of the result, the same text as the job summary.
     value: ${{ steps.score.outputs.summary }}
+  model-label:
+    description: The model's label before the SDK rules; empty unless the result is an ok SDK-mode result.
+    value: ${{ steps.score.outputs.model_label }}
+  head-sha:
+    description: Head commit that was scored; empty unless the status is ok.
+    value: ${{ steps.score.outputs.head_sha }}
+  base-sha:
+    description: Base commit that was scored; empty unless the status is ok.
+    value: ${{ steps.score.outputs.base_sha }}
   label-published:
     description: "true only when publish-label is on and the risk label was added to the unchanged PR."
     value: ${{ steps.score.outputs.label_published }}
