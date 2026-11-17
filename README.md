@@ -60,6 +60,17 @@ Binary and non-UTF-8 changes are supported, including PRs containing only binari
 
 The default context keeps the full title, description, file inventory and counts, then fits a deterministic prefix of code diffs. It uses a **30,000-token estimate plus 2,000-token reserve** for Jev's 32,000-token window. The estimator is `cl100k_base`, not Jev's unpublished tokenizer; actual provider usage is recorded separately. Large file inventories use shared columns when needed, preserving all metadata. Truncated code is marked in the model input, job summary and JSON, with per-file omissions. The configurable 1 MiB serialized-request guard remains an additional byte limit.
 
+Code is kept in path order by default, so in a large PR the files that sort last are cut first. When that would drop the code that matters most in your repository, set `prioritize-paths` and `deprioritize-paths` to newline-separated [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) globs, where `*` also matches `/`. Prioritized code keeps its budget first and deprioritized code, such as generated files or changelogs, is cut first. A path that matches both is deprioritized. The file inventory, counts and metadata stay complete and in path order, and nothing changes for a PR whose code fits.
+
+```yaml
+        with:
+          prioritize-paths: |
+            core/src/main/*
+          deprioritize-paths: |
+            *.lock
+            CHANGELOG.md
+```
+
 An explicit provider context rejection reduces the code prefix by half, then removes code if necessary. Transient errors retry the same request. There are **four provider attempts total**, with waits of **10, 20 and 30 seconds** before attempts two, three and four, including any context fallback. Each distinct request has its own hash and journal; all attempts contribute to accounting.
 
 Missing Git objects or required metadata, invalid binary metadata, metadata that cannot fit even after compaction, or exhausted provider attempts produce an explicit status with no risk label. Unclassified results fail the advisory job while retaining the JSON and summary. Unknown usage or cost stays unknown. Truncation does not impose a risk class, and quality on partially visible changes still needs evaluation.

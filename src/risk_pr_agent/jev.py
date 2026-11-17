@@ -189,7 +189,8 @@ def _binary_evidence(source):
     return evidence
 
 
-def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None):
+def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None,
+                  code_priority=None):
     """Preserve metadata and bound standard diff context; retain legacy experiments."""
     configuration = _configuration(variant, max_bytes, input_profile)
     variant = configuration["variant"]
@@ -276,7 +277,7 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
     if profile == "metadata-diff":
         from .context_budget import fit_diff_context
         fraction = {"bounded_diff": 1.0, "reduced_diff": 0.5, "metadata_only": 0.0}[result["context_stage"]]
-        fitted = fit_diff_context(request, max_bytes, diff_fraction=fraction)
+        fitted = fit_diff_context(request, max_bytes, diff_fraction=fraction, code_priority=code_priority)
         result["omitted"].extend(fitted.pop("omitted", []))
         result.update(fitted, request_bytes=size())
         if result["status"] != "ready":
@@ -479,7 +480,7 @@ def _sum_known(attempts, key, usage=False):
 
 def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                     worker=None, price_snapshot=None, max_attempts=4, timeout_ms=60000,
-                    resume=True, candidate=True, input_profile=None):
+                    resume=True, candidate=True, input_profile=None, code_priority=None):
     """Persist one result per PR, successful request cache and every explicit attempt.
 
     ``worker`` is an injectable callable taking the SDK request and returning the
@@ -552,7 +553,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
     rows = []
     try:
         for snapshot in snapshots:
-            built = build_request(snapshot, variant=variant, max_bytes=max_bytes, input_profile=input_profile)
+            built = build_request(snapshot, variant=variant, max_bytes=max_bytes, input_profile=input_profile,
+                                  code_priority=code_priority)
             example_id = snapshot.get("example_id") or f"{snapshot.get('repo')}#{snapshot.get('number')}"
             row = {"schema_version": 2, "example_id": example_id, "repo": snapshot.get("repo"),
                    "number": snapshot.get("number"), "snapshot": snapshot.get("snapshot"),
@@ -576,7 +578,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                                 or len(attempts) >= max_attempts):
                             break
                         fallback = build_request(snapshot, variant=variant, max_bytes=max_bytes,
-                                                 input_profile=input_profile, context_stage=stage)
+                                                 input_profile=input_profile, context_stage=stage,
+                                                 code_priority=code_priority)
                         row.setdefault("initial_request_hash", built["request_hash"])
                         row["context_fallback_reason"] = "provider_context_rejected"
                         row.update({key: value for key, value in fallback.items() if key != "request"})

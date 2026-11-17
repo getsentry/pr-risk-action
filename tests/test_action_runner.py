@@ -79,6 +79,22 @@ class ActionRunnerTests(unittest.TestCase):
                 self.assertEqual(result["status"], status)
                 client.assert_not_called()
 
+    def test_code_priority_globs_are_forwarded_one_per_option(self):
+        def run(args, **kwargs):
+            self.assertEqual([arg for arg in args if arg.startswith("--prioritize-path")],
+                             ["--prioritize-path=sentry/src/main/*"])
+            self.assertEqual([arg for arg in args if arg.startswith("--deprioritize-path")],
+                             ["--deprioritize-path=*.api", "--deprioritize-path=-odd"])
+            Path(args[args.index("--out") + 1]).write_text(json.dumps(classification()))
+
+        with patch.object(action_runner.subprocess, "run", side_effect=run):
+            action_runner._run_scorer(RepoRef.parse("example/project"), 7, self.directory,
+                                      "sentry/src/main/*\n", "\n  *.api\n-odd\n")
+        args = commands.build_parser().parse_args([
+            "score-pr", "--pr", "7", "--repo", "example/project", "--git-repo", ".",
+            "--prioritize-path=sentry/src/main/*", "--deprioritize-path=-odd"])
+        self.assertEqual((args.prioritize_path, args.deprioritize_path), (["sentry/src/main/*"], ["-odd"]))
+
     def test_success_publishes_only_verified_result(self):
         with patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
                 patch.object(action_runner, "_fetch_git"), \

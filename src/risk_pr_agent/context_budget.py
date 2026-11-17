@@ -6,6 +6,7 @@ reserve reduce overflows; neither is an exact count of Jev's input tokens.
 from __future__ import annotations
 
 import copy
+import fnmatch
 import json
 import math
 from functools import lru_cache
@@ -75,13 +76,26 @@ def _with_code_prefix(floor, fields, characters, compact):
     return candidate
 
 
-def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
+def code_priority_tier(path, code_priority):
+    """Order code by maintainer globs: prioritized first, deprioritized last, path order otherwise."""
+    if not code_priority:
+        return 1
+    if any(fnmatch.fnmatchcase(path, glob) for glob in code_priority.get("deprioritize", ())):
+        return 2
+    if any(fnmatch.fnmatchcase(path, glob) for glob in code_priority.get("prioritize", ())):
+        return 0
+    return 1
+
+
+def fit_diff_context(request, max_bytes, *, diff_fraction=1.0, code_priority=None):
     """Fit ordered code prefixes while preserving every non-code input field.
 
     Mutate only on success. The normal request is unchanged when it fits. Large
     file inventories may use shared column names to retain all their metadata.
     A smaller diff_fraction shortens the prefix even when the original fits,
     allowing bounded recovery after an explicit provider context rejection.
+    ``code_priority`` only changes which code the prefix spends its budget on
+    first; the file inventory keeps its path order.
     """
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
         raise ValueError("max_bytes must be a positive integer")
@@ -92,6 +106,7 @@ def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
     files = request.get("state", {}).get("files", [])
     fields = [(index, key, file[key]) for index, file in enumerate(files)
               for key in CODE_FIELDS if isinstance(file.get(key), str)]
+    fields.sort(key=lambda field: code_priority_tier(files[field[0]]["path"], code_priority))
     fits, tokens = _measure(request, max_bytes)
     if fits and (diff_fraction == 1 or not any(content for _, _, content in fields)):
         return {**result, "status": "ready", "estimated_input_tokens": tokens}

@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from .commands import risk_summary
 from .github import GitHubClient, GitHubError, RepoRef
@@ -61,7 +61,12 @@ def _fetch_git(repo: RepoRef, base: str, head: str, directory: Path) -> None:
         raise ActionError("git_fetch_failed") from None
 
 
-def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
+def _globs(value: str) -> List[str]:
+    return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+def _run_scorer(repo: RepoRef, number: int, directory: Path,
+                prioritize_paths: str = "", deprioritize_paths: str = "") -> Dict[str, Any]:
     output = directory / "scored.json"
     environment = _git_environment()
     environment["PYTHONPATH"] = str(SOURCE_ROOT / "src")
@@ -76,6 +81,9 @@ def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
             sys.executable, "-m", "risk_pr_agent.cli", "score-pr",
             "--repo", repo.slug, "--pr", str(number), "--git-repo", str(directory / "target.git"),
             "--candidate", "--out", str(output), "--cache-dir", str(directory / "cache"),
+            # The = form keeps a glob that starts with "-" from being parsed as an option.
+            *(f"--prioritize-path={glob}" for glob in _globs(prioritize_paths)),
+            *(f"--deprioritize-path={glob}" for glob in _globs(deprioritize_paths)),
         ], cwd=directory, env=environment, check=True, capture_output=True, timeout=420)
     except (subprocess.SubprocessError, OSError):
         raise ActionError("scorer_failed") from None
@@ -99,7 +107,7 @@ def _publish(result: Dict[str, Any], result_path: str) -> None:
 
 
 def run_action(repo_value: str, number_value: str, result_path: str,
-               expected_head: str = "") -> int:
+               expected_head: str = "", prioritize_paths: str = "", deprioritize_paths: str = "") -> int:
     result: Dict[str, Any] = {"schema_version": 2, "candidate": True,
                               "input_profile": "metadata-diff", "risk_label": None}
     try:
@@ -123,7 +131,7 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         with tempfile.TemporaryDirectory(prefix="jev-pr-") as temporary:
             directory = Path(temporary)
             _fetch_git(repo, base, head, directory / "target.git")
-            result = _run_scorer(repo, number, directory)
+            result = _run_scorer(repo, number, directory, prioritize_paths, deprioritize_paths)
             snapshot = result.get("snapshot") or {}
             if (snapshot.get("source_base_sha"), snapshot.get("source_head_sha")) != (base, head):
                 raise ActionError("pr_changed")
@@ -149,7 +157,9 @@ def run_action(repo_value: str, number_value: str, result_path: str,
 def main() -> int:
     return run_action(os.environ.get("INPUT_REPO", ""), os.environ.get("INPUT_PR_NUMBER", ""),
                       os.environ.get("INPUT_RESULT_PATH", "risk-pr-result.json"),
-                      os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""))
+                      os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""),
+                      os.environ.get("INPUT_PRIORITIZE_PATHS", ""),
+                      os.environ.get("INPUT_DEPRIORITIZE_PATHS", ""))
 
 
 if __name__ == "__main__":
