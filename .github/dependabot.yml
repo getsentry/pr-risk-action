@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # "/" covers both .github/workflows and the composite action.yml at the repository root,
+  # which callers run under pull_request_target.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
