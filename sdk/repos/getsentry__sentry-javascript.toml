@@ -76,6 +76,6 @@ kind = "docs"
 paths = [
   ".oxlintrc*.json", "packages/*/.oxlintrc*.json", "dev-packages/.oxlintrc*.json",
   "dev-packages/*/.oxlintrc*.json", ".oxfmtrc.json", "packages/*/eslint.config.mjs", ".size-limit.js",
-  ".secret_scan_ignore", ".git-blame-ignore-revs", "agents.toml", "agents.lock", "warden.toml",
+  ".secret_scan_ignore", ".git-blame-ignore-revs", "agents.toml", "agents.lock",
 ]
 kind = "dev-tooling"

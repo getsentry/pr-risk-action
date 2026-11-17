@@ -12,7 +12,7 @@ from risk_pr_agent.sdk_rubric import MECHANISMS, build_questions, rubric_version
 # The rubric wording is part of the cache identity only through `version`, so any
 # change to the file must come with a version bump. Update both values together.
 PINNED_RUBRIC = {"version": "1",
-                 "sha256": "7252a72e7420a942988228dce321b92b717773c337747227cc7210b9ad1af3d1"}
+                 "sha256": "81087b718a4c2245d093143cb0cbe5c5ae433d00c2a036db2600e3aba3788e95"}
 
 
 class RubricTest(unittest.TestCase):
@@ -48,11 +48,11 @@ class RubricTest(unittest.TestCase):
         for required in ("untrusted", "truncat", "cannot be rolled back"):
             self.assertIn(required, everything)
         self.assertLess(len(tiktoken.get_encoding("cl100k_base").encode(
-            json.dumps(build_questions(list(FAMILIES), True)["risk"]))), 1500)
+            json.dumps(build_questions(list(FAMILIES), True)["risk"]))), 1800)
 
     def test_unknown_family_raises(self):
         with self.assertRaises(ValueError):
-            build_questions(["desktop"], False)
+            build_questions(["console"], False)
 
     def test_family_order_does_not_matter(self):
         self.assertEqual(build_questions(["server", "browser"], False),

@@ -3,7 +3,7 @@
 # GDExtension (C++) compiled by SConstruct into the addon's native libraries; backend chosen per export platform.
 [[area]]
 paths = ["src/**", "SConstruct", "site_scons/**"]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 
 # Platform-independent part of the extension that every backend builds on.
 [[area]]
@@ -12,18 +12,18 @@ paths = [
   "src/sentry/logging/**", "src/sentry/auto_metrics/**", "src/sentry/engine_lifecycle/**",
   "src/sentry/platform/**", "src/register_types.cpp", "src/manifest.gdextension",
 ]
-families = ["hybrid", "mobile-native", "browser"]
+families = ["game-engine", "mobile-native", "native", "browser"]
 shared_core = true
 
 # Web export: JavaScript bridge bundling the Sentry browser SDK.
 [[area]]
 paths = ["src/sentry/javascript/**"]
-families = ["hybrid", "browser"]
+families = ["game-engine", "browser"]
 
 # Android plugin (Kotlin) bridging to sentry-android.
 [[area]]
 paths = ["android_lib/**"]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native"]
 
 # Editor plugin and export plugins (run in the Godot editor on the developer's machine, patch the customer's
 # .csproj and inject Gradle/Xcode settings into exports), plus Roslyn analyzers and source generators.
@@ -32,23 +32,23 @@ paths = [
   "src/editor/**", "src/sentry/dotnet/managed/Sentry.Godot.Analyzers/**",
   "src/sentry/dotnet/managed/Sentry.Godot.SourceGenerators/**",
 ]
-families = ["tooling", "hybrid"]
+families = ["tooling", "game-engine"]
 
 # Addon files shipped as-is (GDScript user feedback UI, .NET auto-init and props imported into customer projects).
 [[area]]
 paths = ["project/addons/sentry/**"]
-families = ["hybrid"]
+families = ["game-engine"]
 
 # Class reference compiled into the extension (GodotCPPDocData) and the generated record of every exposed class,
 # method and property (scripts/update-doc-classes.ps1).
 [[area]]
 paths = ["doc_classes/**"]
-families = ["hybrid"]
+families = ["game-engine"]
 
 # godot-cpp is the engine binding the whole extension is compiled against; .gitmodules lists it.
 [[area]]
 paths = ["modules/godot-cpp", ".gitmodules"]
-families = ["hybrid", "mobile-native", "browser"]
+families = ["game-engine", "mobile-native", "native", "browser"]
 shared_core = true
 
 # Bundled native SDKs (sentry-native submodule, sentry-cocoa download) and the Android library's Gradle pins.
@@ -57,17 +57,17 @@ paths = [
   "modules/sentry-native", "modules/sentry-native.SConscript", "modules/sentry-cocoa.*",
   "gradle/libs.versions.toml", "gradle/wrapper/**",
 ]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 
 # wasm-split, downloaded at this version by SConstruct, splits debug info out of the web build.
 [[area]]
 paths = ["modules/wasm-split.properties"]
-families = ["hybrid", "browser"]
+families = ["game-engine", "browser"]
 
 # Shared MSBuild properties that point every C# project at the shipped Sentry.Godot.Versions.props.
 [[area]]
 paths = ["Directory.Build.props"]
-families = ["tooling", "hybrid"]
+families = ["tooling", "game-engine"]
 
 # Roslyn release-tracking files are compiler inputs (AdditionalFiles) recording shipped diagnostic IDs,
 # so they must not be left as docs-only.
@@ -108,5 +108,5 @@ paths = [
 kind = "samples"
 
 [[kind]]
-paths = [".clang-format", "warden.toml", "agents.toml"]
+paths = [".clang-format", "agents.toml"]
 kind = "dev-tooling"

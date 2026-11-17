@@ -40,6 +40,6 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  ".rubocop.yml", "codecov.yml", "sentry-ruby.code-workspace", "agents.toml", "warden.toml",
+  ".rubocop.yml", "codecov.yml", "sentry-ruby.code-workspace", "agents.toml",
 ]
 kind = "dev-tooling"

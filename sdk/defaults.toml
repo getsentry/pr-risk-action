@@ -26,6 +26,12 @@ paths = [
 ]
 kind = "build-release"
 
+# warden.toml configures the automated reviewer (which checks run, on what, and what fails a PR).
+# A change to it changes how later PRs are reviewed. Blocking, so it never counts as dev-tooling only.
+[[kind]]
+paths = ["**/warden.toml"]
+kind = "build-release"
+
 [[kind]]
 paths = [".claude/**", ".cursor/**", ".agents/**", ".pi/**", ".vscode/**", ".idea/**"]
 kind = "dev-tooling"

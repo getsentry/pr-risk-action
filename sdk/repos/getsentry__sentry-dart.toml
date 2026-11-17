@@ -92,7 +92,7 @@ kind = "build-release"
 
 [[kind]]
 paths = [
-  ".fvmrc", ".ruby-version", "agents.toml", "warden.toml", "metrics/**",
+  ".fvmrc", ".ruby-version", "agents.toml", "metrics/**",
   "packages/*/analysis_options.yaml", "scripts/*/analysis_options.yaml",
   "packages/flutter/config/detekt-bl.xml",
 ]

@@ -58,7 +58,7 @@ class FactSheetTest(unittest.TestCase):
 
     def test_invalid_sheets_raise(self):
         bad = [
-            '[[area]]\npaths = ["a/**"]\nfamilies = ["desktop"]\n',          # unknown family
+            '[[area]]\npaths = ["a/**"]\nfamilies = ["console"]\n',          # unknown family
             '[[area]]\npaths = []\nfamilies = ["server"]\n',                 # empty paths
             '[[kind]]\npaths = ["a/**"]\nkind = "docs"\nnote = "be nice"\n', # unknown key
             '[[kind]]\npaths = ["a/**"]\nkind = "internal"\n',               # unknown kind
@@ -234,9 +234,9 @@ SPOT_CHECKS = [
     ("sentry-ruby", "sentry-rails/gemfiles/ruby-2.7_rails-6.1.0.gemfile.lock", "server", False, "dependencies"),
 
     ("sentry-rust", "sentry-core/src/hub.rs", "server", True, ""),
-    ("sentry-rust", "sentry-minidump/src/lib.rs", "mobile-native server", False, ""),
+    ("sentry-rust", "sentry-minidump/src/lib.rs", "native server", False, ""),
     ("sentry-rust", "sentry-contexts/build.rs", "server", True, ""),
-    ("sentry-rust", "sentry/src/transports/embedded_svc_http.rs", "mobile-native server", True, ""),
+    ("sentry-rust", "sentry/src/transports/embedded_svc_http.rs", "native server", True, ""),
     ("sentry-rust", "sentry/examples/panic-demo.rs", "", False, "samples"),
     ("sentry-rust", "sentry-core/tests/metrics.rs", "", False, "tests"),
 
@@ -276,11 +276,11 @@ SPOT_CHECKS = [
     ("sentry-symfony", "psalm-baseline.xml", "", False, "build-release"),
     ("sentry-symfony", "AUTHORS", "", False, "build-release"),
 
-    ("sentry-native", "external/crashpad", "mobile-native", False, "dependencies"),
-    ("sentry-native", "include/sentry.h", "mobile-native", True, "public-api-record"),
-    ("sentry-native", "src/backends/sentry_backend_inproc.c", "mobile-native", False, ""),
-    ("sentry-native", "vendor/libunwind/src/x86_64/Gstep.c", "mobile-native", False, "dependencies"),
-    ("sentry-native", "ndk/lib/src/main/jni/sentry.c", "hybrid mobile-native", False, ""),
+    ("sentry-native", "external/crashpad", "mobile-native native", False, "dependencies"),
+    ("sentry-native", "include/sentry.h", "mobile-native native", True, "public-api-record"),
+    ("sentry-native", "src/backends/sentry_backend_inproc.c", "mobile-native native", False, ""),
+    ("sentry-native", "vendor/libunwind/src/x86_64/Gstep.c", "mobile-native native", False, "dependencies"),
+    ("sentry-native", "ndk/lib/src/main/jni/sentry.c", "hybrid mobile-native native", False, ""),
     ("sentry-native", "tests/unit/test_basic.c", "", False, "tests"),
     ("sentry-native", "examples/crash.c", "", False, "samples"),
 
@@ -298,10 +298,10 @@ SPOT_CHECKS = [
     ("sentry-capacitor", "android/src/main/java/io/sentry/capacitor/SentryCapacitor.java", "hybrid", False, ""),
     ("sentry-capacitor", "test/sdk.test.ts", "", False, "tests"),
 
-    ("sentry-electron", "src/main/integrations/sentry-minidump/index.ts", "hybrid mobile-native server", False, ""),
-    ("sentry-electron", "src/renderer/sdk.ts", "browser hybrid", False, ""),
-    ("sentry-electron", "src/common/ipc.ts", "browser hybrid server", True, ""),
-    ("sentry-electron", "package.json", "browser hybrid mobile-native server", True, "dependencies"),
+    ("sentry-electron", "src/main/integrations/sentry-minidump/index.ts", "desktop native server", False, ""),
+    ("sentry-electron", "src/renderer/sdk.ts", "browser desktop", False, ""),
+    ("sentry-electron", "src/common/ipc.ts", "browser desktop server", True, ""),
+    ("sentry-electron", "package.json", "browser desktop native server", True, "dependencies"),
     ("sentry-electron", "test/e2e/versions.json", "", False, "tests"),
     ("sentry-electron", "rollup.config.mjs", "", False, "build-release"),
 
@@ -318,28 +318,28 @@ SPOT_CHECKS = [
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/build.gradle.kts", "hybrid mobile-native server", True, "build-release"),
     ("sentry-kotlin-multiplatform", "sentry-kotlin-multiplatform/src/commonTest/kotlin/io/sentry/kotlin/multiplatform/SentryIntegrationTest.kt", "", False, "tests"),
 
-    ("sentry-unity", "modules/sentry-native", "hybrid mobile-native", False, "dependencies"),
-    ("sentry-unity", "src/sentry-dotnet", "browser hybrid mobile-native", True, "dependencies"),
-    ("sentry-unity", "samples/unity-of-bugs/Assets/Scripts/BugFarmButtons.cs", "hybrid", False, ""),
-    ("sentry-unity", "src/Sentry.Unity.Editor/Android/DebugSymbolUpload.cs", "hybrid tooling", False, ""),
-    ("sentry-unity", "package-dev/Runtime/Sentry.Unity.Native.PlayStation.dll.meta", "hybrid", False, "build-release"),
-    ("sentry-unity", "src/Sentry.Unity/SentryUnityOptions.cs", "browser hybrid mobile-native", True, ""),
+    ("sentry-unity", "modules/sentry-native", "game-engine mobile-native native", False, "dependencies"),
+    ("sentry-unity", "src/sentry-dotnet", "browser game-engine mobile-native", True, "dependencies"),
+    ("sentry-unity", "samples/unity-of-bugs/Assets/Scripts/BugFarmButtons.cs", "game-engine", False, ""),
+    ("sentry-unity", "src/Sentry.Unity.Editor/Android/DebugSymbolUpload.cs", "game-engine tooling", False, ""),
+    ("sentry-unity", "package-dev/Runtime/Sentry.Unity.Native.PlayStation.dll.meta", "game-engine", False, "build-release"),
+    ("sentry-unity", "src/Sentry.Unity/SentryUnityOptions.cs", "browser game-engine mobile-native", True, ""),
     ("sentry-unity", "samples/unity-of-bugs/ProjectSettings/ProjectVersion.txt", "", False, "build-release samples"),
 
-    ("sentry-unreal", "modules/sentry-native", "hybrid mobile-native", False, "dependencies"),
-    ("sentry-unreal", "modules/sentry-cocoa.properties", "hybrid mobile-native", False, "dependencies"),
-    ("sentry-unreal", "plugin-dev/Source/Sentry/Private/Tests/SentryEvent.spec.cpp", "hybrid mobile-native", False, ""),
-    ("sentry-unreal", "plugin-dev/Source/Sentry/Private/SentrySubsystem.cpp", "hybrid mobile-native", True, ""),
-    ("sentry-unreal", "plugin-dev/Scripts/upload_debug_symbols.py", "hybrid tooling", False, ""),
-    ("sentry-unreal", "plugin-dev/Source/Sentry/Sentry_Android_UPL.xml", "hybrid mobile-native tooling", False, "build-release dependencies"),
-    ("sentry-unreal", "plugin-dev/Sentry.uplugin", "hybrid", False, "build-release"),
+    ("sentry-unreal", "modules/sentry-native", "game-engine mobile-native native", False, "dependencies"),
+    ("sentry-unreal", "modules/sentry-cocoa.properties", "game-engine mobile-native native", False, "dependencies"),
+    ("sentry-unreal", "plugin-dev/Source/Sentry/Private/Tests/SentryEvent.spec.cpp", "game-engine mobile-native native", False, ""),
+    ("sentry-unreal", "plugin-dev/Source/Sentry/Private/SentrySubsystem.cpp", "game-engine mobile-native native", True, ""),
+    ("sentry-unreal", "plugin-dev/Scripts/upload_debug_symbols.py", "game-engine tooling", False, ""),
+    ("sentry-unreal", "plugin-dev/Source/Sentry/Sentry_Android_UPL.xml", "game-engine mobile-native native tooling", False, "build-release dependencies"),
+    ("sentry-unreal", "plugin-dev/Sentry.uplugin", "game-engine", False, "build-release"),
 
-    ("sentry-godot", "modules/godot-cpp", "browser hybrid mobile-native", True, "dependencies"),
+    ("sentry-godot", "modules/godot-cpp", "browser game-engine mobile-native native", True, "dependencies"),
     ("sentry-godot", "project/test/util/json_assert", "", False, "dependencies tests"),
-    ("sentry-godot", "doc_classes/SentrySDK.xml", "hybrid", False, "public-api-record"),
-    ("sentry-godot", "src/editor/csproj_patcher.cpp", "hybrid mobile-native tooling", False, ""),
-    ("sentry-godot", "src/sentry/sentry_sdk.cpp", "browser hybrid mobile-native", True, ""),
-    ("sentry-godot", "project/addons/sentry/user_feedback/user_feedback_form.gd", "hybrid", False, ""),
+    ("sentry-godot", "doc_classes/SentrySDK.xml", "game-engine", False, "public-api-record"),
+    ("sentry-godot", "src/editor/csproj_patcher.cpp", "game-engine mobile-native native tooling", False, ""),
+    ("sentry-godot", "src/sentry/sentry_sdk.cpp", "browser game-engine mobile-native native", True, ""),
+    ("sentry-godot", "project/addons/sentry/user_feedback/user_feedback_form.gd", "game-engine", False, ""),
     ("sentry-godot", "project/main.gd", "", False, "samples"),
 ]
 
@@ -554,6 +554,8 @@ CODE_RUNNING_PATHS = [".githooks/pre-commit", "hooks/pre-commit", ".husky/pre-co
                       "pkg/.mcp.json", ".run/Tests.run.xml", ".zed/tasks.json", ".vscode/tasks.json",
                       ".vscode/launch.json", ".pre-commit-config.yaml", "pkg/.pre-commit-config.yaml",
                       ".cursor/mcp.json"]
+# Configuration of the automated reviewer: it decides how later PRs are checked, so it blocks low too.
+CODE_RUNNING_PATHS += ["warden.toml", "pkg/warden.toml"]
 
 
 class ExecutedConfigurationTest(unittest.TestCase):
@@ -568,6 +570,15 @@ class ExecutedConfigurationTest(unittest.TestCase):
                 with self.subTest(path=path):
                     self.assertIn("build-release", tag_path(sheet, path)["kinds"])
             self.assertEqual(tag_path(sheet, ".vscode/settings.json")["kinds"], ["dev-tooling"])
+
+    def test_warden_configuration_blocks_low_but_agent_instructions_do_not(self):
+        for repo in ("sentry-go", "sentry-java", "sentry-unity"):
+            with self.subTest(repo=repo):
+                sheet = load_fact_sheet(f"getsentry/{repo}")
+                self.assertEqual(tag_path(sheet, "warden.toml")["kinds"], ["build-release"])
+                for path in ("AGENTS.md", ".claude/settings.json", "agents.toml"):
+                    kinds = tag_path(sheet, path)["kinds"]
+                    self.assertTrue(kinds and set(kinds) <= set(sdk_facts.NON_SHIPPING_KINDS), (path, kinds))
 
     def test_sheets_do_not_call_code_running_configuration_dev_tooling(self):
         for path in sorted((sdk_facts.SDK_ROOT / "repos").glob("getsentry__*.toml")):

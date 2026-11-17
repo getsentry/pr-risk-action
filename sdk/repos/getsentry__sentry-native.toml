@@ -6,16 +6,16 @@ paths = [
   "src/**", "include/**", "external/**", "vendor/**", "cmake/**", "toolchains/**", "CMakeLists.txt",
   "sentry-config.cmake.in", "sentry.rc.in", ".gitmodules",
 ]
-families = ["mobile-native"]
+families = ["native", "mobile-native"]
 
 [[area]]
 paths = ["src/*", "src/path/**", "src/transports/**", "include/**", "vendor/*", "CMakeLists.txt"]
-families = ["mobile-native"]
+families = ["native", "mobile-native"]
 shared_core = true
 
 [[area]]
 paths = ["ndk/**"]
-families = ["mobile-native", "hybrid"]
+families = ["mobile-native", "native", "hybrid"]
 
 [[kind]]
 paths = ["include/sentry.h", "src/exports.map", "ndk/lib/api/**"]
@@ -48,6 +48,6 @@ kind = "samples"
 
 [[kind]]
 paths = [
-  ".clang-format", ".codechecker-ignore", ".codechecker-suppress", ".codecov.yml", "warden.toml",
+  ".clang-format", ".codechecker-ignore", ".codechecker-suppress", ".codecov.yml",
 ]
 kind = "dev-tooling"

@@ -20,12 +20,12 @@ shared_core = true
 # Out-of-process native crash capture (minidumps written to disk, crash reporter process).
 [[area]]
 paths = ["sentry-minidump/**"]
-families = ["mobile-native"]
+families = ["native"]
 
 # ESP-IDF (embedded) HTTP transport.
 [[area]]
 paths = ["sentry/src/transports/embedded_svc_http.rs"]
-families = ["mobile-native"]
+families = ["native"]
 
 [[kind]]
 paths = ["*/examples/**"]
@@ -45,6 +45,6 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  "clippy.toml", "rustfmt.toml", ".codecov.yml", "agents.toml", "warden.toml",
+  "clippy.toml", "rustfmt.toml", ".codecov.yml", "agents.toml",
 ]
 kind = "dev-tooling"

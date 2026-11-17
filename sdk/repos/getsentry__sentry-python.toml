@@ -32,6 +32,6 @@ kind = "docs"
 [[kind]]
 paths = [
   ".coveragerc*", "codecov.yml", "_typos.toml", ".git-blame-ignore-revs",
-  "agents.toml", "warden.toml",
+  "agents.toml",
 ]
 kind = "dev-tooling"

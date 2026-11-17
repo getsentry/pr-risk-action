@@ -43,5 +43,5 @@ paths = ["pages/**", "assets/**", "ISSUE_TEMPLATE.md"]
 kind = "docs"
 
 [[kind]]
-paths = [".formatter.exs", ".dialyzer_ignore.exs", "agents.toml", "warden.toml"]
+paths = [".formatter.exs", ".dialyzer_ignore.exs", "agents.toml"]
 kind = "dev-tooling"

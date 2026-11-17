@@ -49,6 +49,6 @@ paths = [
   "linters/**", "skills/**", ".codex/**", ".clang-format",
   ".swiftlint.yml", "Utils/VersionBump/.swiftlint.yml", "dprint.json", ".markdownlint-cli2.jsonc",
   ".spi.yml", "3rd-party-integrations/*/.spi.yml",
-  ".git-blame-ignore-revs", "agents.toml", "warden.toml",
+  ".git-blame-ignore-revs", "agents.toml",
 ]
 kind = "dev-tooling"

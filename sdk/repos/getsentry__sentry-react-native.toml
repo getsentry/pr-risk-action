@@ -58,6 +58,5 @@ kind = "build-release"
 [[kind]]
 paths = [
   ".oxfmtrc.json", "packages/*/.oxlintrc.json", ".clang-format", ".swiftlint.yml", "agents.toml",
-  "warden.toml",
 ]
 kind = "dev-tooling"

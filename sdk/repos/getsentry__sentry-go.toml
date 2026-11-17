@@ -29,5 +29,5 @@ paths = ["go.work", "scripts/**"]
 kind = "build-release"
 
 [[kind]]
-paths = [".golangci.yml", ".codecov.yml", "agents.toml", "warden.toml"]
+paths = [".golangci.yml", ".codecov.yml", "agents.toml"]
 kind = "dev-tooling"

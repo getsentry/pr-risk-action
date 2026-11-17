@@ -62,7 +62,7 @@ kind = "docs"
 
 [[kind]]
 paths = [
-  "detekt.yml", "*/detekt-baseline.xml", "agents.toml", "warden.toml",
+  "detekt.yml", "*/detekt-baseline.xml", "agents.toml",
   ".git-blame-ignore-revs",
 ]
 kind = "dev-tooling"

@@ -15,7 +15,7 @@ from pathlib import Path
 
 SDK_ROOT = Path(__file__).resolve().parents[2] / "sdk"
 
-FAMILIES = ("server", "mobile-native", "browser", "hybrid", "tooling")
+FAMILIES = ("server", "mobile-native", "native", "desktop", "game-engine", "browser", "hybrid", "tooling")
 KINDS = ("tests", "samples", "docs", "dev-tooling", "public-api-record", "dependencies", "build-release")
 NON_SHIPPING_KINDS = ("tests", "samples", "docs", "dev-tooling")
 BLOCKING_KINDS = ("public-api-record", "dependencies", "build-release")

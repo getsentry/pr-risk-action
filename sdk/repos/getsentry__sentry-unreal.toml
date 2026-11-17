@@ -4,7 +4,7 @@
 # C++ source is compiled inside the customer's game build. Generic and HAL code is used by every platform.
 [[area]]
 paths = ["plugin-dev/Source/Sentry/**"]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 
 [[area]]
 paths = [
@@ -13,7 +13,7 @@ paths = [
   "plugin-dev/Source/Sentry/Private/Interface/**", "plugin-dev/Source/Sentry/Private/Utils/**",
   "plugin-dev/Source/Sentry/Sentry.Build.cs",
 ]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 shared_core = true
 
 # Editor module, editor Python toolsets, post-build steps and debug symbol upload: run on the game developer's
@@ -23,11 +23,11 @@ paths = [
   "plugin-dev/Source/SentryEditor/**", "plugin-dev/Content/**", "plugin-dev/Scripts/**",
   "plugin-dev/Source/Sentry/Sentry_Android_UPL.xml",
 ]
-families = ["tooling", "hybrid"]
+families = ["tooling", "game-engine"]
 
 [[area]]
 paths = ["plugin-dev/**"]
-families = ["hybrid"]
+families = ["game-engine"]
 
 # Bundled native SDKs: sentry-java and sentry-native submodules, and the sentry-cocoa and desktop crash
 # reporter versions downloaded into the plugin.
@@ -36,7 +36,7 @@ paths = [
   ".gitmodules", "modules/sentry-java", "modules/sentry-native", "modules/sentry-cocoa.properties",
   "modules/sentry-crash-reporter.properties",
 ]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 
 # Bundled SDKs: sentry-java and sentry-native are submodules (gitlinks under modules/); sentry-cocoa and the desktop
 # crash reporter are downloaded at the versions in modules/*.properties; sentry-cli at plugin-dev/sentry-cli.properties.
@@ -65,5 +65,5 @@ paths = ["sample/**"]
 kind = "samples"
 
 [[kind]]
-paths = [".clang-format", "warden.toml", "agents.toml", "CLAUDE.md"]
+paths = [".clang-format", "agents.toml", "CLAUDE.md"]
 kind = "dev-tooling"

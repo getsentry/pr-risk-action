@@ -44,7 +44,7 @@ The PR title and description are not sent, so editing them can never change a la
 
 A fact sheet holds two independent mappings from path patterns (`*` matches within a directory, `**` across directories).
 
-- Areas say where code runs and give one or more families: `server`, `mobile-native`, `browser`, `hybrid`, `tooling`. An area may also be marked `shared_core`, meaning every platform in the repository builds on it.
+- Areas say where code runs and give one or more families: `server`, `mobile-native`, `native` (C, C++ and Rust on desktop, server, console and embedded targets), `desktop`, `game-engine`, `browser`, `hybrid`, `tooling`. An area may also be marked `shared_core`, meaning every platform in the repository builds on it.
 - Kinds say what a file is: `tests`, `samples`, `docs`, `dev-tooling`, `public-api-record`, `dependencies`, `build-release`.
 
 A file can have several kinds; every matching pattern applies and the blocking kinds still block. A file whose kinds are all non-shipping (`tests`, `samples`, `docs`, `dev-tooling`) counts towards no family and is never shared core. A file matching no area and no kind is unmapped. A rename is tagged by both its old and new path.

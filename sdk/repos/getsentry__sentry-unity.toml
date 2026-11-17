@@ -3,7 +3,7 @@
 # Managed runtime shared by every player platform (Windows, macOS, Linux, Android, iOS, WebGL, consoles).
 [[area]]
 paths = ["src/Sentry.Unity/**"]
-families = ["hybrid", "mobile-native", "browser"]
+families = ["game-engine", "mobile-native", "browser"]
 shared_core = true
 
 # Platform bridges into the bundled native SDKs (Java/NDK, Cocoa, sentry-native, console backends).
@@ -12,19 +12,19 @@ paths = [
   "src/Sentry.Unity.Android/**", "src/Sentry.Unity.iOS/**", "src/Sentry.Unity.MacOS/**",
   "src/Sentry.Unity.Native/**", "package-dev/Plugins/**",
 ]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 
 # Editor integration: configuration windows, build pre/post-processors, Gradle/Xcode project edits,
 # sentry-cli symbol upload. Runs on the game developer's machine and in their CI, and also
 # injects code and settings into the built player.
 [[area]]
 paths = ["src/Sentry.Unity.Editor/**", "src/Sentry.Unity.Editor.iOS/**", "package-dev/Editor/**", "package/Editor/**"]
-families = ["tooling", "hybrid"]
+families = ["tooling", "game-engine"]
 
 # UPM package contents (package-dev is copied into package-release by scripts/pack.ps1, then package/ overrides it).
 [[area]]
 paths = ["package-dev/**", "package/**"]
-families = ["hybrid"]
+families = ["game-engine"]
 
 # The unity-of-bugs Scenes and Scripts folders are copied into the released package as Samples~ (scripts/pack.ps1),
 # so they ship and are deliberately not tagged samples.
@@ -33,24 +33,24 @@ paths = [
   "samples/unity-of-bugs/Assets/Scenes/**", "samples/unity-of-bugs/Assets/Scenes.meta",
   "samples/unity-of-bugs/Assets/Scripts/**", "samples/unity-of-bugs/Assets/Scripts.meta",
 ]
-families = ["hybrid"]
+families = ["game-engine"]
 
 # Pins every assembly is built from: the sentry-dotnet submodule (much of the public API comes from it),
 # the .NET SDK in global.json, the build-wide Directory.Build.props, and .gitmodules.
 [[area]]
 paths = ["src/sentry-dotnet", "src/sentry-dotnet/**", ".gitmodules", "global.json", "Directory.Build.props", "src/Directory.Build.props"]
-families = ["hybrid", "mobile-native", "browser"]
+families = ["game-engine", "mobile-native", "browser"]
 shared_core = true
 
 # Bundled native SDK submodules and the build files that compile them into the package.
 [[area]]
 paths = ["modules/sentry-cocoa", "modules/sentry-java", "modules/sentry-native", "modules/Directory.Build.*"]
-families = ["hybrid", "mobile-native"]
+families = ["game-engine", "mobile-native", "native"]
 
 # sentry-cli version the editor integration downloads for symbol upload.
 [[area]]
 paths = ["modules/sentry-cli.properties"]
-families = ["tooling", "hybrid"]
+families = ["tooling", "game-engine"]
 
 # Bundled SDKs: sentry-dotnet, sentry-java, sentry-native, sentry-cocoa and app-runner are submodules
 # (the gitlink entries match these patterns); sentry-cli is downloaded at the version in modules/sentry-cli.properties.
@@ -92,5 +92,5 @@ paths = ["docs/**"]
 kind = "docs"
 
 [[kind]]
-paths = [".clang-format", "warden.toml", "agents.toml"]
+paths = [".clang-format", "agents.toml"]
 kind = "dev-tooling"

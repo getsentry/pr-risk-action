@@ -87,11 +87,34 @@ context leaking between concurrent requests; capturing request bodies, headers, 
 short-lived serverless and edge runtimes with restricted APIs; supported runtime and framework versions.\
 """
 mobile-native = """\
-Mobile and native examples: crashes or ANRs from work on the main thread or during app start; \
+Mobile examples: crashes or ANRs from work on the main thread or during app start; \
 signal, exception and crash handlers and anything that runs inside them; \
 crash reports and envelopes written to disk and sent on next launch; ProGuard or R8 rules and symbol upload; \
 binary size, battery, disk and network use; screenshots, view hierarchy or session replay capturing personal data; \
 supported OS versions; memory safety in C and C++ code.\
+"""
+native = """\
+Native examples: memory safety, undefined behavior and thread safety in C, C++ or unsafe Rust; \
+signal, exception and crash handlers and anything that runs inside them; \
+out-of-process crash handlers and minidumps written to disk and sent on next start; \
+C ABI and header compatibility, symbol visibility, static versus shared linking; \
+build system, compiler and toolchain options that customers compile with; \
+supported compilers, architectures and operating systems, including consoles and embedded targets with restricted memory and APIs.\
+"""
+desktop = """\
+Desktop examples: several processes (main, renderer or UI, utility, crash reporter) that must agree on IPC, scope and \
+event ownership, so events can be lost or duplicated between them; \
+native crashes captured as minidumps, and offline events stored on disk and sent on next launch; \
+app start and shutdown time; behavior inside packaged, sandboxed or auto-updated apps; \
+user names, file paths and other machine data in events; supported OS and runtime versions.\
+"""
+game-engine = """\
+Game engine examples: plugin code compiled into or loaded by the customer's game on every export platform \
+(desktop, mobile, console, web); work on the main or render thread that costs frame time, and allocations that trigger garbage collection; \
+conflicts with the engine's own crash handling and logging; \
+version bumps of bundled native SDKs, which ship that SDK's whole set of changes, and the bridges to them; \
+editor integration and build or export steps that edit the customer's project, inject settings or upload symbols; \
+supported engine versions; screenshots and scene or device data captured by default.\
 """
 browser = """\
 Browser examples: bundle size and tree-shaking; patching of globals such as fetch, XHR, history, console \
