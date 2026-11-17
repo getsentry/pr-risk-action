@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from .commands import risk_summary
 from .github import GitHubClient, GitHubError, RepoRef
+from .jev import valid_risk_guidance_path
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
@@ -61,7 +62,7 @@ def _fetch_git(repo: RepoRef, base: str, head: str, directory: Path) -> None:
         raise ActionError("git_fetch_failed") from None
 
 
-def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
+def _run_scorer(repo: RepoRef, number: int, directory: Path, risk_guidance_path: str = "") -> Dict[str, Any]:
     output = directory / "scored.json"
     environment = _git_environment()
     environment["PYTHONPATH"] = str(SOURCE_ROOT / "src")
@@ -76,6 +77,7 @@ def _run_scorer(repo: RepoRef, number: int, directory: Path) -> Dict[str, Any]:
             sys.executable, "-m", "risk_pr_agent.cli", "score-pr",
             "--repo", repo.slug, "--pr", str(number), "--git-repo", str(directory / "target.git"),
             "--candidate", "--out", str(output), "--cache-dir", str(directory / "cache"),
+            *(["--risk-guidance-path", risk_guidance_path] if risk_guidance_path else []),
         ], cwd=directory, env=environment, check=True, capture_output=True, timeout=420)
     except (subprocess.SubprocessError, OSError):
         raise ActionError("scorer_failed") from None
@@ -99,7 +101,7 @@ def _publish(result: Dict[str, Any], result_path: str) -> None:
 
 
 def run_action(repo_value: str, number_value: str, result_path: str,
-               expected_head: str = "") -> int:
+               expected_head: str = "", risk_guidance_path: str = "") -> int:
     result: Dict[str, Any] = {"schema_version": 2, "candidate": True,
                               "input_profile": "metadata-diff", "risk_label": None}
     try:
@@ -112,6 +114,8 @@ def run_action(repo_value: str, number_value: str, result_path: str,
             raise ActionError("invalid_repository")
         result.update(repo=repo.slug, number=number, example_id=f"{repo.slug}#{number}")
         expected_head = _sha(expected_head) if expected_head else ""
+        if risk_guidance_path and not valid_risk_guidance_path(risk_guidance_path):
+            raise ActionError("invalid_risk_guidance_path")
         if not os.environ.get("AI_GATEWAY_API_KEY"):
             raise ActionError("missing_credentials")
         if os.environ.get("GITHUB_SERVER_URL", "https://github.com") != "https://github.com":
@@ -123,7 +127,7 @@ def run_action(repo_value: str, number_value: str, result_path: str,
         with tempfile.TemporaryDirectory(prefix="jev-pr-") as temporary:
             directory = Path(temporary)
             _fetch_git(repo, base, head, directory / "target.git")
-            result = _run_scorer(repo, number, directory)
+            result = _run_scorer(repo, number, directory, risk_guidance_path)
             snapshot = result.get("snapshot") or {}
             if (snapshot.get("source_base_sha"), snapshot.get("source_head_sha")) != (base, head):
                 raise ActionError("pr_changed")
@@ -149,7 +153,8 @@ def run_action(repo_value: str, number_value: str, result_path: str,
 def main() -> int:
     return run_action(os.environ.get("INPUT_REPO", ""), os.environ.get("INPUT_PR_NUMBER", ""),
                       os.environ.get("INPUT_RESULT_PATH", "risk-pr-result.json"),
-                      os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""))
+                      os.environ.get("INPUT_EXPECTED_HEAD_SHA", ""),
+                      os.environ.get("INPUT_RISK_GUIDANCE_PATH", ""))
 
 
 if __name__ == "__main__":

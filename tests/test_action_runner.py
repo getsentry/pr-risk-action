@@ -79,6 +79,23 @@ class ActionRunnerTests(unittest.TestCase):
                 self.assertEqual(result["status"], status)
                 client.assert_not_called()
 
+    def test_risk_guidance_path_is_validated_before_network_and_forwarded(self):
+        with patch.object(action_runner, "GitHubClient") as client:
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = action_runner.run_action("example/project", "7", "result.json", "", "../secrets")
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads((self.directory / "result.json").read_text())["status"],
+                         "invalid_risk_guidance_path")
+        client.assert_not_called()
+
+        def run(args, **kwargs):
+            self.assertEqual(args[args.index("--risk-guidance-path") + 1], ".github/pr-risk.md")
+            Path(args[args.index("--out") + 1]).write_text(json.dumps(classification()))
+
+        with patch.object(action_runner.subprocess, "run", side_effect=run):
+            action_runner._run_scorer(RepoRef.parse("example/project"), 7, self.directory, ".github/pr-risk.md")
+
     def test_success_publishes_only_verified_result(self):
         with patch.object(action_runner.GitHubClient, "get_pull_request", return_value=pull_request()), \
                 patch.object(action_runner, "_fetch_git"), \

@@ -9,7 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from risk_pr_agent.jev import DEFAULT_INPUT_PROFILE, INPUT_PROFILES, Worker, build_request, fetch_price_snapshot, score_snapshots
+from risk_pr_agent.jev import (DEFAULT_INPUT_PROFILE, INPUT_PROFILES, RISK_GUIDANCE_INTRODUCTION, RISK_GUIDANCE_MAX_BYTES, Worker,
+                              build_request, fetch_price_snapshot, read_risk_guidance, score_snapshots,
+                              valid_risk_guidance_path)
 
 
 def snapshot():
@@ -140,6 +142,63 @@ class RequestTests(unittest.TestCase):
         self.assertNotIn("risk_label", result)
         self.assertIn("untrusted", result["request"]["questions"]["risk"]["instructions"])
         self.assertEqual(set(result["request"]["questions"]), {"risk"})
+
+
+class RiskGuidanceTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name)
+        self.git("init", "-q")
+        self.git("config", "user.name", "Fixture")
+        self.git("config", "user.email", "fixture@example.invalid")
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args]).decode().strip()
+
+    def commit(self, content):
+        (self.repo / "risk.md").write_bytes(content)
+        self.git("add", ".")
+        self.git("commit", "-qm", "guidance")
+        return self.git("rev-parse", "HEAD")
+
+    def test_reads_only_bounded_utf8_files_at_the_revision(self):
+        cases = [(b"  Transport changes are high.\n", "loaded"), (b" \n", "empty"),
+                 (b"\xff\xfe", "invalid_encoding"), (b"x" * (RISK_GUIDANCE_MAX_BYTES + 1), "too_large")]
+        for content, status in cases:
+            with self.subTest(status=status):
+                revision = self.commit(content)
+                guidance = read_risk_guidance(str(self.repo), revision, "risk.md")
+                self.assertEqual(guidance["status"], status)
+                self.assertEqual(guidance["sha256"], hashlib.sha256(content).hexdigest())
+                self.assertEqual(guidance.get("content"), "Transport changes are high." if status == "loaded" else None)
+        self.assertEqual(read_risk_guidance(str(self.repo), revision, "other.md")["status"], "missing")
+
+    def test_rejects_paths_that_are_not_plain_repository_files(self):
+        for path in ("", "/etc/passwd", "../risk.md", "docs/../risk.md", "./risk.md", "HEAD:risk.md",
+                     "risk.md\n", "docs//risk.md"):
+            with self.subTest(path=path):
+                self.assertFalse(valid_risk_guidance_path(path))
+                with self.assertRaises(ValueError):
+                    read_risk_guidance(str(self.repo), "HEAD", path)
+        self.assertTrue(valid_risk_guidance_path(".github/pr-risk.md"))
+
+    def test_loaded_guidance_extends_the_question_and_unusable_guidance_blocks_classification(self):
+        default = build_request(snapshot())
+        loaded = build_request(snapshot(), risk_guidance={"path": "risk.md", "status": "loaded", "content": "RULE"})
+        self.assertEqual(loaded["status"], "ready")
+        self.assertEqual(loaded["request"]["questions"]["risk"]["instructions"],
+                         default["request"]["questions"]["risk"]["instructions"] + RISK_GUIDANCE_INTRODUCTION + "RULE")
+        self.assertEqual(loaded["request"]["state"], default["request"]["state"])
+        self.assertNotEqual(loaded["request_hash"], default["request_hash"])
+        self.assertEqual(loaded["risk_guidance"], {"path": "risk.md", "status": "loaded"})
+        for status in ("missing", "empty"):
+            unused = build_request(snapshot(), risk_guidance={"path": "risk.md", "status": status})
+            self.assertEqual(unused["request_hash"], default["request_hash"])
+        for status in ("too_large", "invalid_encoding"):
+            blocked = build_request(snapshot(), risk_guidance={"path": "risk.md", "status": status})
+            self.assertEqual(blocked["status"], "risk_guidance_" + status)
+            self.assertNotIn("request", blocked)
 
 
 class BinaryRequestTests(unittest.TestCase):
