@@ -46,7 +46,7 @@ class ContextBudgetTests(unittest.TestCase):
         self.assertEqual(result["omitted"], [])
         self.assertEqual(result["estimated_input_tokens"], token_count(value))
         self.assertEqual(result["context_budget"], {"model_limit": 32000, "reserve": 2000,
-                                                    "estimator": "cl100k_base"})
+                                                    "estimator": "cl100k_base", "max_input_tokens": 30000})
 
     def test_byte_limit_preserves_all_metadata_and_ordered_prefix(self):
         value = request([{"path": "a.py", "status": "renamed", "previous_path": "old.py",
@@ -168,6 +168,9 @@ class ContextBudgetTests(unittest.TestCase):
         for fraction in (-0.1, 1.1, float("nan"), float("inf"), True):
             with self.subTest(fraction=fraction), self.assertRaises(ValueError):
                 fit_diff_context(request(), 1000, diff_fraction=fraction)
+        for tokens in (0, -1, True, 1.5, 30001):
+            with self.subTest(tokens=tokens), self.assertRaises(ValueError):
+                fit_diff_context(request(), 1048576, max_input_tokens=tokens)
 
 
 if __name__ == "__main__":

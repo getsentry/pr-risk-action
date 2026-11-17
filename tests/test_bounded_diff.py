@@ -70,7 +70,7 @@ class BoundedDiffTests(unittest.TestCase):
         self.assertTrue(self.score(lambda _: self.fail("cached requests must not call the provider"))["cache_hit"])
         self.sleep.assert_not_called()
 
-    def test_only_explicit_context_rejection_reduces_code_and_preserves_accounting(self):
+    def test_explicit_context_rejection_reduces_code_and_preserves_accounting(self):
         responses = iter([{"status": "context_rejected", "retryable": False}, success()])
         calls = []
 
@@ -95,6 +95,98 @@ class BoundedDiffTests(unittest.TestCase):
         self.assertEqual(cached["attempts"], row["attempts"])
         self.sleep.assert_called_once_with(10)
         self.assertEqual(len((self.out / "attempts.jsonl").read_text().splitlines()), 4)
+
+    def test_transient_retries_reduce_input_budget_and_resume_without_extra_calls(self):
+        self.source["files"][0]["patch"] *= 3
+        calls = []
+
+        def worker(request):
+            calls.append(request)
+            return {"status": "provider_error", "retryable": True, "error": {"statusCode": 503}} if len(calls) < 4 else success()
+
+        row = score_snapshots([self.source], self.out, worker=worker, price_snapshot=PRICE)[0]
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual([a["context_budget"]["max_input_tokens"] for a in row["attempts"]], [30000, 8000, 4000, 4000])
+        self.assertEqual([a["overall_attempt"] for a in row["attempts"]], [1, 2, 3, 4])
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [10, 20, 30])
+        counts = [a["estimated_input_tokens"] for a in row["attempts"]]
+        for actual, limit in zip(counts, (30000, 8000, 4000, 4000)):
+            self.assertLessEqual(actual, limit)
+            self.assertGreater(actual, limit - 30)
+        self.assertEqual(calls[2], calls[3])
+        self.assertEqual(len({a["request_hash"] for a in row["attempts"]}), 3)
+        self.assertEqual(row["request_hash"], row["attempts"][-1]["request_hash"])
+        self.assertEqual(row["context_fallback_reason"], "transient_error")
+        for request in calls:
+            self.assertEqual(request["state"]["pr"], calls[0]["state"]["pr"])
+            self.assertEqual(request["state"]["line_totals"], calls[0]["state"]["line_totals"])
+            for actual, original in zip(request["state"]["files"], self.source["files"]):
+                for key in ("path", "status", "previous_path", "additions", "deletions"):
+                    self.assertEqual(actual.get(key), original.get(key))
+        self.assertIsNone(row["reported_cost_usd"])
+        self.assertEqual(row["reported_cost_usd_known"], success()["reported_cost_usd"])
+        cached = score_snapshots([self.source], self.out, worker=lambda _: self.fail("cached fallback must not call"), price_snapshot=PRICE)[0]
+        self.assertTrue(cached["cache_hit"])
+        self.assertEqual(cached["attempts"], row["attempts"])
+        self.assertEqual(self.sleep.call_count, 3)
+
+    def test_small_requests_keep_code_but_track_each_retry_budget(self):
+        self.source = snapshot()
+        calls = []
+
+        def worker(request):
+            calls.append(request)
+            return {"status": "timeout", "retryable": True} if len(calls) < 3 else success()
+
+        row = self.score(worker)
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual(calls, [calls[0]] * 3)
+        self.assertEqual([a["context_budget"]["max_input_tokens"] for a in row["attempts"]], [30000, 8000, 4000])
+        self.assertEqual(len({a["request_hash"] for a in row["attempts"]}), 3)
+        self.assertFalse(row["diff_truncated"])
+
+    def test_retry_metadata_floor_stops_without_discarding_metadata_or_prior_cost(self):
+        self.source["pr_metadata"]["description"] = "Required description. " * 2500
+        calls = []
+
+        def worker(request):
+            calls.append(request)
+            return {"status": "provider_error", "retryable": True, "reported_cost_usd": 0.002}
+
+        row = score_snapshots([self.source], self.out, worker=worker, price_snapshot=PRICE)[0]
+        self.assertEqual(row["status"], "metadata_exceeds_budget")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["state"]["pr"]["description"], self.source["pr_metadata"]["description"])
+        self.assertEqual(row["context_budget"]["max_input_tokens"], 8000)
+        self.assertIsNone(row["risk_label"])
+        self.assertNotIn("request_hash", row)
+        self.assertEqual(row["initial_request_hash"], row["attempts"][0]["request_hash"])
+        self.assertEqual(row["reported_cost_usd"], 0.002)
+        self.sleep.assert_not_called()
+
+    def test_retry_budgets_preserve_configuration_for_mixed_outcome_evaluation(self):
+        full = build_request(self.source)
+        reduced = build_request(self.source, max_input_tokens=8000)
+        self.assertEqual(full["configuration_hash"], reduced["configuration_hash"])
+        self.assertEqual(full["configuration"], reduced["configuration"])
+        self.assertNotEqual(full["request_hash"], reduced["request_hash"])
+
+    def test_context_rejection_after_transients_can_use_the_final_attempt(self):
+        responses = iter([{"status": "timeout", "retryable": True}] * 2 +
+                         [{"status": "context_rejected", "retryable": False}, success()])
+        row = self.score(lambda _: next(responses))
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual([a["context_stage"] for a in row["attempts"]], ["bounded_diff"] * 3 + ["reduced_diff"])
+        self.assertEqual([a["overall_attempt"] for a in row["attempts"]], [1, 2, 3, 4])
+
+    def test_transient_retry_preserves_prior_context_rejection_and_reduced_stage(self):
+        responses = iter([{"status": "context_rejected", "retryable": False},
+                          {"status": "timeout", "retryable": True}, success()])
+        row = self.score(lambda _: next(responses))
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual(row["context_fallback_reason"], "provider_context_rejected")
+        self.assertEqual([a["context_stage"] for a in row["attempts"]], ["bounded_diff", "reduced_diff", "reduced_diff"])
+        self.assertEqual([a["context_budget"]["max_input_tokens"] for a in row["attempts"]], [30000, 8000, 4000])
 
     def test_transient_errors_and_context_reductions_share_four_attempts(self):
         responses = iter([

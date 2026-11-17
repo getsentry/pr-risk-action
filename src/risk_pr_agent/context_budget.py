@@ -27,14 +27,14 @@ def _serialize(request):
     return json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-def _measure(request, max_bytes):
+def _measure(request, max_bytes, max_input_tokens):
     serialized = _serialize(request)
     size = len(serialized.encode("utf-8"))
     # Avoid tokenizing a many-megabyte diff that already fails the byte limit.
     if size > max_bytes:
         return False, None
     count = len(_encoding().encode_ordinary(serialized))
-    return count <= MODEL_LIMIT - RESERVE, count
+    return count <= max_input_tokens, count
 
 
 def _compact_metadata(state):
@@ -75,7 +75,7 @@ def _with_code_prefix(floor, fields, characters, compact):
     return candidate
 
 
-def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
+def fit_diff_context(request, max_bytes, *, diff_fraction=1.0, max_input_tokens=None):
     """Fit ordered code prefixes while preserving every non-code input field.
 
     Mutate only on success. The normal request is unchanged when it fits. Large
@@ -87,12 +87,17 @@ def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
         raise ValueError("max_bytes must be a positive integer")
     if isinstance(diff_fraction, bool) or not math.isfinite(diff_fraction) or not 0 <= diff_fraction <= 1:
         raise ValueError("diff_fraction must be between 0 and 1")
+    if max_input_tokens is None:
+        max_input_tokens = MODEL_LIMIT - RESERVE
+    if (type(max_input_tokens) is not int or not 1 <= max_input_tokens <= MODEL_LIMIT - RESERVE):
+        raise ValueError("max_input_tokens must be between 1 and the model limit minus its reserve")
     budget = {"model_limit": MODEL_LIMIT, "reserve": RESERVE, "estimator": ESTIMATOR}
+    budget["max_input_tokens"] = max_input_tokens
     result = {"context_budget": budget, "diff_truncated": False, "omitted": []}
     files = request.get("state", {}).get("files", [])
     fields = [(index, key, file[key]) for index, file in enumerate(files)
               for key in CODE_FIELDS if isinstance(file.get(key), str)]
-    fits, tokens = _measure(request, max_bytes)
+    fits, tokens = _measure(request, max_bytes, max_input_tokens)
     if fits and (diff_fraction == 1 or not any(content for _, _, content in fields)):
         return {**result, "status": "ready", "estimated_input_tokens": tokens}
 
@@ -103,12 +108,12 @@ def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
             if isinstance(file.get(key), str):
                 del file[key]
     state["code_context"] = {"truncated": True, "snippets_may_be_incomplete": True}
-    floor_fits, floor_tokens = _measure(floor, max_bytes)
+    floor_fits, floor_tokens = _measure(floor, max_bytes, max_input_tokens)
     compact = False
     if not floor_fits and files:
         _compact_metadata(state)
         compact = True
-        floor_fits, floor_tokens = _measure(floor, max_bytes)
+        floor_fits, floor_tokens = _measure(floor, max_bytes, max_input_tokens)
     if not floor_fits:
         return {**result, "status": "metadata_exceeds_budget", "estimated_input_tokens": floor_tokens}
 
@@ -121,7 +126,7 @@ def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
     while low < high:
         middle = (low + high + 1) // 2
         candidate = _with_code_prefix(floor, fields, middle, compact)
-        candidate_fits, candidate_tokens = _measure(candidate, max_bytes)
+        candidate_fits, candidate_tokens = _measure(candidate, max_bytes, max_input_tokens)
         if candidate_fits:
             low, best, best_tokens = middle, candidate, candidate_tokens
         else:
@@ -129,12 +134,12 @@ def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
     included_characters = math.floor(low * diff_fraction)
     if included_characters != low:
         best = _with_code_prefix(floor, fields, included_characters, compact)
-        fits, best_tokens = _measure(best, max_bytes)
+        fits, best_tokens = _measure(best, max_bytes, max_input_tokens)
         # Token counts need not be monotonic for adjacent string prefixes.
         while not fits and included_characters:
             included_characters -= 1
             best = _with_code_prefix(floor, fields, included_characters, compact)
-            fits, best_tokens = _measure(best, max_bytes)
+            fits, best_tokens = _measure(best, max_bytes, max_input_tokens)
 
     remaining = included_characters
     omitted = []
@@ -151,7 +156,7 @@ def fit_diff_context(request, max_bytes, *, diff_fraction=1.0):
             omitted.append(omission)
     if not omitted:
         del best["state"]["code_context"]
-        _, best_tokens = _measure(best, max_bytes)
+        _, best_tokens = _measure(best, max_bytes, max_input_tokens)
     request.clear()
     request.update(best)
     return {**result, "status": "ready", "estimated_input_tokens": best_tokens,
