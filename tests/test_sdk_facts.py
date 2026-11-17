@@ -552,7 +552,8 @@ class PlantedDirectoryTest(unittest.TestCase):
 # Paths that run on a customer's or maintainer's machine, so they must block low.
 CODE_RUNNING_PATHS = [".githooks/pre-commit", "hooks/pre-commit", ".husky/pre-commit", "lefthook.yml", ".mcp.json",
                       "pkg/.mcp.json", ".run/Tests.run.xml", ".zed/tasks.json", ".vscode/tasks.json",
-                      ".vscode/launch.json"]
+                      ".vscode/launch.json", ".pre-commit-config.yaml", "pkg/.pre-commit-config.yaml",
+                      ".cursor/mcp.json"]
 
 
 class ExecutedConfigurationTest(unittest.TestCase):
@@ -609,6 +610,12 @@ class FixWaveSpotCheckTest(unittest.TestCase):
                 kinds = self.tags(repo, path)["kinds"]
                 self.assertIn("build-release", kinds)
                 self.assertNotIn("docs", kinds)
+
+    def test_cocoa_mcp_server_definitions_in_other_tool_configs_are_build_release(self):
+        for path in (".codex/config.toml", ".cursor/mcp.json", ".xcodebuildmcp/config.yaml"):
+            with self.subTest(path=path):
+                self.assertIn("build-release", self.tags("sentry-cocoa", path)["kinds"])
+        self.assertNotIn("dev-tooling", self.tags("sentry-cocoa", ".xcodebuildmcp/config.yaml")["kinds"])
 
     def test_kotlin_multiplatform_md_files_are_docs_from_the_defaults(self):
         self.assertEqual(self.tags("sentry-kotlin-multiplatform", "AGENTS.MD")["kinds"], ["docs"])

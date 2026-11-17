@@ -81,7 +81,8 @@ jobs:
       contents: read
       pull-requests: write    # this job only; no issues, contents or actions write
     steps:
-      - uses: getsentry/pr-risk-action@<full commit SHA>
+      - id: risk
+        uses: getsentry/pr-risk-action@<full commit SHA>
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
         with:
@@ -118,13 +119,13 @@ A risk label is a hint for reviewers. Triage-role users and any workflow with `i
 What a skip-review or auto-merge consumer must check. Every check uses the step outputs or the JSON result of the trusted run, compared with the PR's current state from the GitHub API:
 
 1. Never read the label.
-2. Take the outputs, or the uploaded `pr-risk-result` artifact, from the trusted workflow run itself: event `pull_request_target`, this workflow file, on the default branch, found by its run ID. Do not look up artifacts by name alone: a fork `pull_request` run can upload an artifact with the same name. A successful job only means status `ok`, not `low`.
-3. Require `status == 'ok'`, `risk-label == 'low'` and a non-empty `model-label` (JSON: `status`, `risk_label`, `model_label`). With `publish-label: true`, also require `label-published == 'true'`.
+2. Take the outputs, or the uploaded `pr-risk-result` artifact, from the trusted workflow run itself: event `pull_request_target`, this workflow file, on the default branch, found by its run ID. Step outputs (`steps.risk.outputs.*`) are readable only inside that workflow, so a consumer outside it, such as a bot or another workflow, must use the `pr-risk-result` artifact of that run. Do not look up artifacts by name alone: a fork `pull_request` run can upload an artifact with the same name. A successful job only means status `ok`, not `low`.
+3. Require `status == 'ok'`, `risk-label == 'low'` and a non-empty `model-label` (JSON: `status`, `risk_label`, `model_label`). With `publish-label: true`, also require `label-published == 'true'` (JSON: `label_published`).
 4. Require `head-sha` and `base-sha` (JSON: `snapshot.source_head_sha`, `snapshot.source_base_sha`) to equal the PR's current head and base, the PR's base ref to be the default branch, and the PR to be open and not a draft.
 5. Merge or approve with `head-sha` pinned (the merge API's `sha` parameter), so a push between the check and the action fails.
 6. Decide explicitly whether the author may be the only human involved. The author writes everything the classifier sees, so a `low` should reduce review effort, not replace the second reviewer.
 
-`label-published == 'true'` is the only output that by itself implies a result gated by the SDK rules: it is true only for an `ok` SDK-mode result whose label was added to the unchanged PR. `status` and `risk-label` alone do not: for a repository without a fact sheet, `risk-label` may read `low` with no rules applied, and `model-label` is then empty.
+A result is gated by the SDK rules when `model-label` is non-empty. `label-published == 'true'` additionally means the label on the PR was written by this run for the scored revision. `status` and `risk-label` alone say neither: for a repository without a fact sheet, `risk-label` may read `low` with no rules applied, and `model-label` is then empty.
 
 Known limits:
 
