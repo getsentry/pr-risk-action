@@ -12,6 +12,10 @@ inputs:
     description: Optional head commit from the triggering event; changed PRs remain unclassified.
     required: false
     default: ""
+  risk-guidance-path:
+    description: Optional repository file with maintainer risk guidance, read from the PR base revision.
+    required: false
+    default: ""
   result-path:
     description: JSON result path, relative to the workspace unless absolute.
     required: false
@@ -69,5 +73,6 @@ runs:
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
         INPUT_EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
         INPUT_RESULT_PATH: ${{ inputs.result-path }}
+        INPUT_RISK_GUIDANCE_PATH: ${{ inputs.risk-guidance-path }}
         TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/pr-risk-action-tiktoken
       run: PYTHONPATH="$GITHUB_ACTION_PATH/src" python -m risk_pr_agent.action_runner

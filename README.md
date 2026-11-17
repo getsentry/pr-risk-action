@@ -52,6 +52,12 @@ No target checkout or target dependency installation is needed. The Action loads
 
 The Action verifies that the PR has not moved before publishing a classification. A moved PR is reported as unclassified. `expected-head-sha` binds automatic runs to their triggering revision; leave it empty for a manual run against the current PR.
 
+## Repository risk guidance
+
+Set `risk-guidance-path` to a repository file, such as `.github/pr-risk.md`, to tell Jev which mechanisms are risky in your repository. The Action reads that file from the PR's **base** revision and appends it to the rubric instructions, so a PR cannot change the guidance it is graded by; edits to the file in the PR stay ordinary untrusted evidence until they merge. Keep it short: it is limited to 8 KiB and counts toward the same context budget as the diff, so every line of guidance leaves less room for code.
+
+If the file is missing or empty on the base branch, for example in the PR that adds it, the PR is classified without guidance. A file over 8 KiB or that is not UTF-8 leaves the PR unclassified with `risk_guidance_too_large` or `risk_guidance_invalid_encoding`. The JSON result records the path, base revision, size and SHA-256 of the guidance it used.
+
 ## Result
 
 The Action writes a job summary and a JSON result (`risk-pr-result.json` by default), and exposes `risk-label` and `status` outputs. The JSON records the exact revision, class probabilities, available provider confidence, request hash, versions, usage, attempts, latency and known or estimated cost.

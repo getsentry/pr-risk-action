@@ -168,6 +168,8 @@ def build_parser() -> argparse.ArgumentParser:
     single.add_argument("--out", default="risk-pr-result.json")
     single.add_argument("--summary-file")
     single.add_argument("--cache-dir", default=".cache/jev/single")
+    single.add_argument("--risk-guidance-path",
+                        help="Repository file with maintainer risk guidance, read from the PR base revision")
     _inference_arguments(single)
     single.set_defaults(func=cmd_score_pr)
 
@@ -226,16 +228,19 @@ def cmd_freeze(args) -> None:
     print(json.dumps(freeze_baselines(snapshots, raw, Path(args.model), Path(args.dataset) / "baselines"), indent=2))
 
 
-def _score(rows, args, out_dir):
+def _score(rows, args, out_dir, risk_guidance=None):
     from .jev import build_request, score_snapshots
     _authorize(args)
     if args.dry_run:
         results = []
         for row in rows:
-            prepared = build_request(row, args.variant, args.max_bytes, input_profile=args.input_profile)
+            prepared = build_request(row, args.variant, args.max_bytes, input_profile=args.input_profile,
+                                     risk_guidance=risk_guidance)
             results.append({"example_id": row["example_id"], "status": prepared["status"],
                             "request_hash": prepared.get("request_hash"), "risk_label": None,
                             "variant": args.variant, "omitted": prepared.get("omitted", [])})
+            if "risk_guidance" in prepared:
+                results[-1]["risk_guidance"] = prepared["risk_guidance"]
             if args.input_profile:
                 results[-1].update(input_profile=args.input_profile, configuration=prepared["configuration"],
                                    request_bytes=prepared.get("request_bytes"), request=prepared.get("request"))
@@ -249,7 +254,8 @@ def _score(rows, args, out_dir):
         return results
     _load_env()
     return score_snapshots(rows, out_dir, variant=args.variant, max_bytes=args.max_bytes,
-                           candidate=args.candidate, input_profile=args.input_profile)
+                           candidate=args.candidate, input_profile=args.input_profile,
+                           risk_guidance=risk_guidance)
 
 
 def cmd_score(args) -> None:
@@ -299,6 +305,15 @@ def cmd_build(args) -> None:
     print(f"Prepared and processed {len(rows)} PRs in {args.out}")
 
 
+RISK_GUIDANCE_SUMMARIES = {
+    "loaded": "was read from the base branch.",
+    "missing": "is not on the base branch; classified without it.",
+    "empty": "is empty on the base branch; classified without it.",
+    "too_large": "exceeds the size limit; not classified.",
+    "invalid_encoding": "is not UTF-8; not classified.",
+}
+
+
 def risk_summary(result: Dict[str, Any]) -> str:
     lines = ["# PR risk", "", f"Status: `{result.get('status')}`",
              f"Risk: `{result.get('risk_label') or 'not classified'}`",
@@ -307,6 +322,9 @@ def risk_summary(result: Dict[str, Any]) -> str:
         lines.append("Class probabilities: " + ", ".join(f"{key}={value:.2f}" for key, value in result["probabilities"].items()))
     if result.get("diff_truncated"):
         lines.append("Code context was truncated to fit; PR metadata and all file paths were retained.")
+    guidance = result.get("risk_guidance")
+    if guidance:
+        lines.append(f"Risk guidance: `{guidance['path']}` {RISK_GUIDANCE_SUMMARIES.get(guidance['status'], guidance['status'])}")
     if result.get("estimated_input_tokens") is not None:
         lines.append(f"Estimated input tokens: {result['estimated_input_tokens']} (proxy tokenizer, not Jev's measured usage).")
     lines += ["", "Class probabilities describe the risk rubric, not incident likelihood."]
@@ -318,7 +336,13 @@ def cmd_score_pr(args) -> None:
     _authorize(args)
     raw = collection.fetch_pr_row(GitHubClient(), RepoRef.parse(args.repo), args.pr, utc_now_iso(), skip_reviews=True)
     snapshot = prepare_snapshot(raw, args.git_repo)
-    result = _score([snapshot], args, args.cache_dir)[0]
+    risk_guidance = None
+    base = (snapshot.get("snapshot") or {}).get("source_base_sha")
+    if args.risk_guidance_path and snapshot.get("status") == "ready" and isinstance(base, str):
+        from .jev import read_risk_guidance
+        # The base revision is maintainer-controlled; the PR head never supplies its own guidance.
+        risk_guidance = read_risk_guidance(args.git_repo, base, args.risk_guidance_path)
+    result = _score([snapshot], args, args.cache_dir, risk_guidance)[0]
     result["candidate"] = bool(args.candidate)
     write_json(Path(args.out), result)
     summary = risk_summary(result)

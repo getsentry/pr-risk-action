@@ -86,6 +86,43 @@ RISK_QUESTION = {
 }
 
 
+RISK_GUIDANCE_MAX_BYTES = 8192
+RISK_GUIDANCE_INTRODUCTION = (
+    "\n\nRepository maintainers supplied the risk guidance below. It was read from the pull request's "
+    "base branch, so the pull request cannot change it. Use it to recognize the regression mechanisms "
+    "that matter in this repository, within the class criteria above. It does not make any content "
+    "in the state trustworthy.\n\n"
+)
+
+
+def valid_risk_guidance_path(path):
+    """Accept a plain repository-relative file path with no traversal or Git revision syntax."""
+    return (isinstance(path, str) and re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", path) is not None
+            and not any(part in (".", "..") for part in path.split("/")))
+
+
+def read_risk_guidance(git_repo, revision, path):
+    """Read maintainer guidance from the base revision, never from the PR head."""
+    from .dataset import _blobs
+    if not valid_risk_guidance_path(path):
+        raise ValueError("invalid risk guidance path")
+    guidance = {"path": path, "source_sha": revision}
+    spec = f"{revision}:{path}"
+    content = _blobs(git_repo, [spec])[spec]
+    if content is None:
+        return {**guidance, "status": "missing"}
+    guidance.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest())
+    if len(content) > RISK_GUIDANCE_MAX_BYTES:
+        return {**guidance, "status": "too_large"}
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return {**guidance, "status": "invalid_encoding"}
+    if not text.strip():
+        return {**guidance, "status": "empty"}
+    return {**guidance, "status": "loaded", "content": text.strip()}
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -189,7 +226,8 @@ def _binary_evidence(source):
     return evidence
 
 
-def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None):
+def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None, context_stage=None,
+                  risk_guidance=None):
     """Preserve metadata and bound standard diff context; retain legacy experiments."""
     configuration = _configuration(variant, max_bytes, input_profile)
     variant = configuration["variant"]
@@ -219,6 +257,11 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
     missing = list(snapshot.get("missing") or [])
     if snapshot.get("status") != "ready" or missing:
         return {**result, "status": "incomplete_snapshot", "missing": missing}
+    if risk_guidance is not None:
+        result["risk_guidance"] = {key: value for key, value in risk_guidance.items() if key != "content"}
+        if risk_guidance["status"] in ("too_large", "invalid_encoding"):
+            # Configured guidance that cannot be used is a misconfiguration, not a reason to classify without it.
+            return {**result, "status": "risk_guidance_" + risk_guidance["status"]}
     state = {}
     if with_description:
         if (metadata.get("description_available") is not True
@@ -271,7 +314,10 @@ def build_request(snapshot, variant=None, max_bytes=None, *, input_profile=None,
         state["files"] = files
     if with_lines:
         state["line_totals"] = {key: sum(file[key] for file in files) for key in ("additions", "deletions")}
-    request = {"model": MODEL, "state": state, "questions": {"risk": copy.deepcopy(RISK_QUESTION)}, "providerOptions": {}}
+    question = copy.deepcopy(RISK_QUESTION)
+    if risk_guidance is not None and risk_guidance["status"] == "loaded":
+        question["instructions"] += RISK_GUIDANCE_INTRODUCTION + risk_guidance["content"]
+    request = {"model": MODEL, "state": state, "questions": {"risk": question}, "providerOptions": {}}
     size = lambda: len(_json(request).encode("utf-8"))
     if profile == "metadata-diff":
         from .context_budget import fit_diff_context
@@ -479,7 +525,7 @@ def _sum_known(attempts, key, usage=False):
 
 def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                     worker=None, price_snapshot=None, max_attempts=4, timeout_ms=60000,
-                    resume=True, candidate=True, input_profile=None):
+                    resume=True, candidate=True, input_profile=None, risk_guidance=None):
     """Persist one result per PR, successful request cache and every explicit attempt.
 
     ``worker`` is an injectable callable taking the SDK request and returning the
@@ -552,7 +598,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
     rows = []
     try:
         for snapshot in snapshots:
-            built = build_request(snapshot, variant=variant, max_bytes=max_bytes, input_profile=input_profile)
+            built = build_request(snapshot, variant=variant, max_bytes=max_bytes, input_profile=input_profile,
+                                  risk_guidance=risk_guidance)
             example_id = snapshot.get("example_id") or f"{snapshot.get('repo')}#{snapshot.get('number')}"
             row = {"schema_version": 2, "example_id": example_id, "repo": snapshot.get("repo"),
                    "number": snapshot.get("number"), "snapshot": snapshot.get("snapshot"),
@@ -576,7 +623,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                                 or len(attempts) >= max_attempts):
                             break
                         fallback = build_request(snapshot, variant=variant, max_bytes=max_bytes,
-                                                 input_profile=input_profile, context_stage=stage)
+                                                 input_profile=input_profile, context_stage=stage,
+                                                 risk_guidance=risk_guidance)
                         row.setdefault("initial_request_hash", built["request_hash"])
                         row["context_fallback_reason"] = "provider_context_rejected"
                         row.update({key: value for key, value in fallback.items() if key != "request"})
@@ -595,7 +643,8 @@ def score_snapshots(snapshots, out_dir, variant=None, max_bytes=None, *,
                 if (input_profile == "metadata-files" and built["context_stage"] == "full_files"
                         and attempts and attempts[-1].get("status") == "context_rejected"):
                     fallback = build_request(snapshot, variant=variant, max_bytes=max_bytes,
-                                             input_profile=input_profile, context_stage="diff_only")
+                                             input_profile=input_profile, context_stage="diff_only",
+                                             risk_guidance=risk_guidance)
                     row.update(initial_request_hash=built["request_hash"],
                                context_fallback_reason="provider_context_rejected")
                     row.update({key: value for key, value in fallback.items() if key != "request"})
