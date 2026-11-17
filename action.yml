@@ -12,6 +12,14 @@ inputs:
     description: Optional head commit from the triggering event; changed PRs remain unclassified.
     required: false
     default: ""
+  prioritize-paths:
+    description: Optional newline-separated fnmatch globs whose diffs keep their budget first when code must be truncated.
+    required: false
+    default: ""
+  deprioritize-paths:
+    description: Optional newline-separated fnmatch globs whose diffs are cut first when code must be truncated.
+    required: false
+    default: ""
   result-path:
     description: JSON result path, relative to the workspace unless absolute.
     required: false
@@ -69,5 +77,7 @@ runs:
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
         INPUT_EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
         INPUT_RESULT_PATH: ${{ inputs.result-path }}
+        INPUT_PRIORITIZE_PATHS: ${{ inputs.prioritize-paths }}
+        INPUT_DEPRIORITIZE_PATHS: ${{ inputs.deprioritize-paths }}
         TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/pr-risk-action-tiktoken
       run: PYTHONPATH="$GITHUB_ACTION_PATH/src" python -m risk_pr_agent.action_runner

@@ -68,6 +68,27 @@ class ContextBudgetTests(unittest.TestCase):
         self.assertEqual(result["omitted"][1]["included_bytes"], 0)
         self.assertEqual(result["omitted"][0]["included_bytes"], len(included.encode()))
 
+    def test_code_priority_spends_the_prefix_on_prioritized_code_and_keeps_inventory_order(self):
+        files = [{"path": path, "status": "modified", "additions": 300, "deletions": 0, "patch": f"+{path}()\n" * 300}
+                 for path in ("CHANGELOG.md", "sentry-spring/src/main/A.java", "sentry/api/sentry.api",
+                              "sentry/src/main/Core.java")]
+        value = request(copy.deepcopy(files))
+        result = fit_diff_context(value, 11000, code_priority={
+            "prioritize": ["sentry/src/main/*", "CHANGELOG.md"], "deprioritize": ["*.api", "CHANGELOG.md"]})
+        state = value["state"]
+        self.assertEqual([file["path"] for file in state["files"]], [file["path"] for file in files])
+        self.assertEqual(state["files"][3]["patch"], files[3]["patch"])
+        self.assertTrue(files[1]["patch"].startswith(state["files"][1]["patch"]))
+        # Deprioritize wins over prioritize, and deprioritized code is cut first.
+        self.assertNotIn("patch", state["files"][0])
+        self.assertNotIn("patch", state["files"][2])
+        self.assertEqual([item["path"] for item in result["omitted"]],
+                         ["sentry-spring/src/main/A.java", "CHANGELOG.md", "sentry/api/sentry.api"])
+        unordered = request(copy.deepcopy(files))
+        fit_diff_context(unordered, 11000)
+        self.assertEqual(unordered["state"]["files"][0]["patch"], files[0]["patch"])
+        self.assertNotIn("patch", unordered["state"]["files"][3])
+
     def test_token_limit_is_independent_of_byte_limit(self):
         patch = "".join(f"+register_route_{i}(value_{i}, error_{i})\n" for i in range(5000))
         value = request([{"path": "routes.py", "status": "added", "patch": patch}])

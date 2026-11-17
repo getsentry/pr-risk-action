@@ -168,6 +168,10 @@ def build_parser() -> argparse.ArgumentParser:
     single.add_argument("--out", default="risk-pr-result.json")
     single.add_argument("--summary-file")
     single.add_argument("--cache-dir", default=".cache/jev/single")
+    single.add_argument("--prioritize-path", action="append", default=[],
+                        help="fnmatch glob whose diffs keep their budget first when code must be truncated")
+    single.add_argument("--deprioritize-path", action="append", default=[],
+                        help="fnmatch glob whose diffs are cut first when code must be truncated; wins over --prioritize-path")
     _inference_arguments(single)
     single.set_defaults(func=cmd_score_pr)
 
@@ -226,13 +230,14 @@ def cmd_freeze(args) -> None:
     print(json.dumps(freeze_baselines(snapshots, raw, Path(args.model), Path(args.dataset) / "baselines"), indent=2))
 
 
-def _score(rows, args, out_dir):
+def _score(rows, args, out_dir, code_priority=None):
     from .jev import build_request, score_snapshots
     _authorize(args)
     if args.dry_run:
         results = []
         for row in rows:
-            prepared = build_request(row, args.variant, args.max_bytes, input_profile=args.input_profile)
+            prepared = build_request(row, args.variant, args.max_bytes, input_profile=args.input_profile,
+                                     code_priority=code_priority)
             results.append({"example_id": row["example_id"], "status": prepared["status"],
                             "request_hash": prepared.get("request_hash"), "risk_label": None,
                             "variant": args.variant, "omitted": prepared.get("omitted", [])})
@@ -249,7 +254,8 @@ def _score(rows, args, out_dir):
         return results
     _load_env()
     return score_snapshots(rows, out_dir, variant=args.variant, max_bytes=args.max_bytes,
-                           candidate=args.candidate, input_profile=args.input_profile)
+                           candidate=args.candidate, input_profile=args.input_profile,
+                           code_priority=code_priority)
 
 
 def cmd_score(args) -> None:
@@ -318,7 +324,10 @@ def cmd_score_pr(args) -> None:
     _authorize(args)
     raw = collection.fetch_pr_row(GitHubClient(), RepoRef.parse(args.repo), args.pr, utc_now_iso(), skip_reviews=True)
     snapshot = prepare_snapshot(raw, args.git_repo)
-    result = _score([snapshot], args, args.cache_dir)[0]
+    code_priority = None
+    if args.prioritize_path or args.deprioritize_path:
+        code_priority = {"prioritize": args.prioritize_path, "deprioritize": args.deprioritize_path}
+    result = _score([snapshot], args, args.cache_dir, code_priority)[0]
     result["candidate"] = bool(args.candidate)
     write_json(Path(args.out), result)
     summary = risk_summary(result)
